@@ -572,11 +572,11 @@ document.addEventListener("keydown", (e) => {
 
 
 /* ---------- Version ---------- */
-// Bei jeder Änderung: APP_VERSION erhöhen (gleiche Zahl wie ?v= in index.html) und APP_CHANGES neu schreiben.
-const APP_VERSION = 10;
+// Bei jeder Änderung: Nummer in index.html (<meta name="app-version">) und version.json erhöhen, APP_DATE und APP_CHANGES neu schreiben.
+const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "Videofehler zeigt jetzt die echte Browser-Meldung, unterstützte Codecs und einen Link zum direkten Öffnen",
+  "Selbstprüfung beim Start: veraltete Seite lädt sich automatisch in der neuen Version (kein privater Tab mehr nötig)",
 ];
 
 /* ---------- Code-Sperre ---------- */

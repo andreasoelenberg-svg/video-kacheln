@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
+<meta name="app-version" content="11">
 <title>Video-Kacheln</title>
 <style>
   :root {
@@ -170,7 +171,44 @@
 </div>
 
 <script src="./lib/msal-browser.min.js"></script>
-<!-- Versionsnummer: bei jeder Änderung an app.js erhöhen, damit Browser die neue Datei laden -->
-<script src="./app.js?v=10"></script>
+<!-- Start-Prüfung: Bei jeder Änderung die Nummer in <meta name="app-version"> UND in version.json erhöhen.
+     Ist die Seite im Zwischenspeicher veraltet, lädt sie sich beim Start selbst in der neuen Version. -->
+<script>
+(function () {
+  var BUILD = document.querySelector('meta[name="app-version"]').content;
+  var done = false;
+  function go() {
+    if (done) return;
+    done = true;
+    var s = document.createElement("script");
+    s.src = "./app.js?v=" + BUILD;
+    document.body.appendChild(s);
+  }
+  try {
+    // Läuft gerade eine Microsoft-Anmeldung (Antwort im Adressteil nach #), nichts umleiten.
+    if (/[#&](code|state|error)=/.test(location.hash || "")) return go();
+    var ctl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); go(); }, 3000);
+    fetch("./version.json?t=" + Date.now(), { cache: "no-store", signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        clearTimeout(timer);
+        if (done) return;
+        var latest = String(j.version);
+        if (/^\d+$/.test(latest) && latest !== BUILD) { // nur bei gültiger Nummer
+          var tried = null;
+          try { tried = sessionStorage.getItem("vk_reload"); } catch (_) {}
+          if (tried !== latest) { // nur ein Versuch pro Version, damit keine Endlosschleife entsteht
+            try { sessionStorage.setItem("vk_reload", latest); } catch (_) {}
+            location.replace(location.pathname + "?v=" + latest + (location.hash || ""));
+            return;
+          }
+        }
+        go();
+      })
+      .catch(function () { clearTimeout(timer); go(); });
+  } catch (_) { go(); }
+})();
+</script>
 </body>
 </html>
