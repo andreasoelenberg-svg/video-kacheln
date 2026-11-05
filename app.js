@@ -470,6 +470,8 @@ async function play(id) {
   probeInfo = "";
   fileInfo = "";
   lastDownloadUrl = "";
+  lastItemName = item.name;
+  if (blobCtl) { blobCtl.abort(); blobCtl = null; }
   revokeBlob();
   // Blätterliste: alle Videos und Bilder des Ordners in der aktuell gewählten Sortierung.
   viewList = sorted().filter((it) => !it.folder);
@@ -527,6 +529,30 @@ let blobUrl = null;
 let probeInfo = "";
 let fileInfo = "";
 let lastDownloadUrl = "";
+let lastItemName = "";
+let blobCtl = null;
+
+// Knöpfe für die VLC-App (iPhone/iPad). Adressen laut VLC-Dokumentation: vlc-x-callback://x-callback-url/stream bzw. /download.
+function vlcBox() {
+  if (!lastDownloadUrl) return null;
+  const box = document.createElement("div");
+  box.style.cssText = "display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 4px";
+  const mk = (text, href) => {
+    const l = document.createElement("a");
+    l.className = "btn";
+    l.href = href;
+    l.textContent = text;
+    l.style.cssText = "text-decoration:none;display:inline-flex;align-items:center;color:var(--text)";
+    l.addEventListener("click", () => { if (blobCtl) blobCtl.abort(); }); // laufendes Laden hier beenden
+    return l;
+  };
+  const u = encodeURIComponent(lastDownloadUrl);
+  box.append(
+    mk("In VLC abspielen", "vlc-x-callback://x-callback-url/stream?url=" + u),
+    mk("In VLC laden", "vlc-x-callback://x-callback-url/download?url=" + u + "&filename=" + encodeURIComponent(lastItemName || "video.mp4"))
+  );
+  return box;
+}
 
 function revokeBlob() {
   if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (_) { /* nicht kritisch */ } blobUrl = null; }
@@ -683,6 +709,8 @@ function showVideoError() {
     d.textContent = t;
     els.pmsg.append(d);
   }
+  const vb = vlcBox();
+  if (vb) els.pmsg.append(vb);
   if (lastDownloadUrl) {
     const link = document.createElement("a");
     link.href = lastDownloadUrl; // frische, kurzlebige Adresse; gilt nur ca. 1 Stunde
@@ -710,8 +738,11 @@ els.pvideo.addEventListener("error", async () => {
     const bar = document.createElement("div");
     track.append(bar);
     els.pmsg.append(label, track);
+    const vb = vlcBox();
+    if (vb) els.pmsg.append(vb);
+    blobCtl = typeof AbortController === "function" ? new AbortController() : null;
     try {
-      const r = await fetch(src);
+      const r = await fetch(src, blobCtl ? { signal: blobCtl.signal } : undefined);
       const len = r.headers.get("content-length");
       probeInfo = "Abruf: Status " + r.status + ", Content-Type " + (r.headers.get("content-type") || "unbekannt") +
         (len ? ", " + sizeText(Number(len)) : "");
@@ -745,6 +776,11 @@ els.pvideo.addEventListener("error", async () => {
       return;
     } catch (e) {
       if (token !== playToken) return;
+      if (e && e.name === "AbortError") { // über VLC-Knopf beendet
+        track.remove();
+        label.textContent = "Laden hier beendet. Das Video wird in VLC geöffnet.";
+        return;
+      }
       probeInfo = probeInfo || "Abruf nicht möglich: " + ((e && e.message) || e);
     }
   }
@@ -787,8 +823,7 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "Fortschrittsbalken jetzt sichtbar (eigene Darstellung)",
-  "Datei-Analyse: zeigt Codec, Profil und Auflösung des Videos; korrigiert hev1 auf hvc1 für Safari",
+  "Bei Videofehler: Knöpfe „In VLC abspielen“ und „In VLC laden“ (VLC-App auf dem iPhone)",
 ];
 
 /* ---------- Code-Sperre ---------- */
