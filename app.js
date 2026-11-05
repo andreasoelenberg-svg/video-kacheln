@@ -418,9 +418,9 @@ let fsRequested = false;
 let viewList = [];
 let viewIndex = -1;
 
-// Blättern: Wisch nach links = vorheriges, Wisch nach rechts = nächstes Element (so gewünscht).
-// Zum Vertauschen den Wert auf +1 ändern.
-const SWIPE_LEFT_STEP = -1;
+// Blättern: Wisch nach links = nächstes, Wisch nach rechts = vorheriges Element (üblich).
+// Zum Vertauschen den Wert auf -1 ändern. Die Pfeiltasten sind davon unabhängig (links = zurück).
+const SWIPE_LEFT_STEP = 1;
 const SWIPE_MIN_PX = 60;
 
 function step(dir) {
@@ -545,8 +545,8 @@ els.pclose.addEventListener("click", closePlayer);
 document.addEventListener("keydown", (e) => {
   if (els.player.hidden) return;
   if (e.key === "Escape") closePlayer();
-  else if (e.key === "ArrowLeft") step(SWIPE_LEFT_STEP);
-  else if (e.key === "ArrowRight") step(-SWIPE_LEFT_STEP);
+  else if (e.key === "ArrowLeft") step(-1);
+  else if (e.key === "ArrowRight") step(1);
 });
 
 // Wischen im Player (auch im Vollbild, solange der Player selbst im Vollbild ist).
