@@ -95,6 +95,15 @@
   #player .title { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .95rem; }
   #player .close { background: rgba(255,255,255,.14); color: #fff; border-color: transparent; }
   #player img { flex: 1 1 0; min-height: 0; width: 100%; object-fit: contain; background: #000; }
+  #player .nav {
+    display: flex; gap: 12px;
+    padding: 10px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+  #player .nav button {
+    flex: 1 1 0; min-height: 56px; font-size: 1.8rem; line-height: 1;
+    background: rgba(255,255,255,.14); color: #fff; border-color: transparent;
+  }
+  #player .nav button:disabled { opacity: .3; cursor: default; }
   #player video { flex: 1 1 0; min-height: 0; width: 100%; background: #000; }
   #player .msg { color: #fff; padding: 0 16px 16px; font-size: .9rem; }
   #player .msg.err { color: #ff9c93; }
@@ -127,7 +136,7 @@
   <button class="btn" id="back" type="button" hidden>&larr; Zurück</button>
   <span id="crumb"></span>
 </div>
-<p id="hint" hidden>Tippen öffnet einen Ordner, spielt ein Video ab oder zeigt ein Bild. Im Player: nach links/rechts wischen blättert.</p>
+<p id="hint" hidden>Tippen öffnet einen Ordner, spielt ein Video ab oder zeigt ein Bild. Im Player blättern die Pfeile unten.</p>
 <div id="status"></div>
 <div id="grid" role="listbox" aria-label="Inhalt"></div>
 
@@ -139,6 +148,10 @@
   <video id="pvideo" controls playsinline></video>
   <img id="pimg" alt="" hidden>
   <div class="msg" id="pmsg" hidden></div>
+  <div class="nav">
+    <button class="btn" id="pprev" type="button" aria-label="Vorheriges">&#8249;</button>
+    <button class="btn" id="pnext" type="button" aria-label="Nächstes">&#8250;</button>
+  </div>
 </div>
 
 <div id="gate" hidden>
@@ -152,6 +165,6 @@
 
 <script src="./lib/msal-browser.min.js"></script>
 <!-- Versionsnummer: bei jeder Änderung an app.js erhöhen, damit Browser die neue Datei laden -->
-<script src="./app.js?v=7"></script>
+<script src="./app.js?v=8"></script>
 </body>
 </html>

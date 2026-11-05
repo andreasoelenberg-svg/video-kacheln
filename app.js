@@ -24,7 +24,7 @@ const els = {
   grid: $("grid"), status: $("status"), count: $("count"), hint: $("hint"),
   sort: $("sort"), reload: $("reload"), logout: $("logout"),
   pathbar: $("pathbar"), back: $("back"), crumb: $("crumb"),
-  player: $("player"), pvideo: $("pvideo"), pimg: $("pimg"), ptitle: $("ptitle"), pmsg: $("pmsg"), pclose: $("pclose"),
+  player: $("player"), pvideo: $("pvideo"), pimg: $("pimg"), ptitle: $("ptitle"), pmsg: $("pmsg"), pclose: $("pclose"), pprev: $("pprev"), pnext: $("pnext"),
 };
 
 /* ---------- Zustand ---------- */
@@ -418,10 +418,11 @@ let fsRequested = false;
 let viewList = [];
 let viewIndex = -1;
 
-// Blättern: Wisch nach links = nächstes, Wisch nach rechts = vorheriges Element (üblich).
-// Zum Vertauschen den Wert auf -1 ändern. Die Pfeiltasten sind davon unabhängig (links = zurück).
-const SWIPE_LEFT_STEP = 1;
-const SWIPE_MIN_PX = 60;
+// Blättern per Pfeil-Knöpfen unten im Player (und Pfeiltasten am PC).
+function updateNav() {
+  els.pprev.disabled = viewIndex <= 0;
+  els.pnext.disabled = viewIndex < 0 || viewIndex >= viewList.length - 1;
+}
 
 function step(dir) {
   const next = viewIndex + dir;
@@ -452,14 +453,6 @@ function exitFullscreen() {
   try { const p = ex.call(document); if (p && p.catch) p.catch(() => {}); } catch (_) { /* nicht kritisch */ }
 }
 
-// iPhone-Safari kann nur das Video selbst in den Vollbildmodus schalten.
-function enterVideoFullscreen() {
-  const v = els.pvideo;
-  if (v.webkitEnterFullscreen) {
-    try { v.webkitEnterFullscreen(); } catch (_) { /* Browser verweigert: Video läuft dann im Player-Fenster */ }
-  }
-}
-
 function onFullscreenChange() {
   const active = !!(document.fullscreenElement || document.webkitFullscreenElement);
   // Wer den Vollbildmodus verlässt, kommt zurück zu den Kacheln.
@@ -468,7 +461,6 @@ function onFullscreenChange() {
 }
 document.addEventListener("fullscreenchange", onFullscreenChange);
 document.addEventListener("webkitfullscreenchange", onFullscreenChange);
-els.pvideo.addEventListener("webkitendfullscreen", () => { if (!els.player.hidden) closePlayer(); });
 
 async function play(id) {
   const item = items.find((x) => x.id === id);
@@ -479,7 +471,10 @@ async function play(id) {
   viewIndex = viewList.findIndex((it) => it.id === id);
   const isImg = isImage(item);
   // Videos starten im Vollbild; Bilder werden im Anzeigefenster gezeigt.
-  const elementFs = isImg ? false : enterFullscreen();
+  // Videos starten im Vollbild, wo der Browser das für die ganze Seite erlaubt. Auf dem iPhone gibt es das nicht:
+  // Dort füllt der Player das Fenster und behält seine Pfeil-Knöpfe (Safaris eigener Videovollbild hätte keine).
+  if (!isImg) enterFullscreen();
+  updateNav();
   els.ptitle.textContent = (viewIndex >= 0 ? (viewIndex + 1) + " / " + viewList.length + " · " : "") + item.name;
   els.pmsg.hidden = false;
   els.pmsg.className = "msg";
@@ -503,9 +498,6 @@ async function play(id) {
     }
     els.pvideo.src = url;
     els.pmsg.hidden = true;
-    if (!elementFs) {
-      els.pvideo.addEventListener("loadedmetadata", enterVideoFullscreen, { once: true });
-    }
     try { await els.pvideo.play(); } catch (_) { /* Browser verlangt ggf. Tippen auf Play */ }
   } catch (e) {
     if (token !== playToken) return;
@@ -542,6 +534,8 @@ function closePlayer() {
 }
 
 els.pclose.addEventListener("click", closePlayer);
+els.pprev.addEventListener("click", () => step(-1));
+els.pnext.addEventListener("click", () => step(1));
 document.addEventListener("keydown", (e) => {
   if (els.player.hidden) return;
   if (e.key === "Escape") closePlayer();
@@ -549,29 +543,6 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowRight") step(1);
 });
 
-// Wischen im Player (auch im Vollbild, solange der Player selbst im Vollbild ist).
-let swipe = null;
-els.player.addEventListener("touchstart", (e) => {
-  swipe = null;
-  if (e.touches.length !== 1) return;
-  const t = e.touches[0];
-  const r = els.player.getBoundingClientRect();
-  // Leiste oben und unterer Rand (Videosteuerung, Zeitleiste) nicht als Wischfläche nutzen.
-  if (e.target.closest && e.target.closest(".bar")) return;
-  if (r.bottom - t.clientY < 90) return;
-  swipe = { x: t.clientX, y: t.clientY, t: Date.now() };
-}, { passive: true });
-els.player.addEventListener("touchend", (e) => {
-  if (!swipe) return;
-  const t = e.changedTouches[0];
-  const dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
-  const quick = Date.now() - swipe.t < 800;
-  swipe = null;
-  if (quick && Math.abs(dx) >= SWIPE_MIN_PX && Math.abs(dx) > 1.5 * Math.abs(dy)) {
-    step(dx < 0 ? SWIPE_LEFT_STEP : -SWIPE_LEFT_STEP);
-  }
-}, { passive: true });
-els.player.addEventListener("touchcancel", () => { swipe = null; });
 
 /* ---------- Code-Sperre ---------- */
 // Bequemlichkeits-Sperre vor dem Start der App. Kein Ersatz für die Microsoft-Anmeldung:
