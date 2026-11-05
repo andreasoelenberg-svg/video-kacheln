@@ -10,6 +10,11 @@ const SCOPES = ["Files.Read"];
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const DOUBLE_TAP_MS = 400;
 
+// Bildformate, die gängige Browser direkt anzeigen können (HEIC u. Ä. bewusst nicht dabei).
+const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|avif)$/i;
+const VIDEO_RE = /\.mp4$/i;
+const isImage = (it) => !!(it && it.file && IMAGE_RE.test(it.name || ""));
+
 const FOLDER_SVG =
   '<svg viewBox="0 0 64 64" width="64" height="64" fill="none" stroke="currentColor" stroke-width="3" ' +
   'stroke-linejoin="round" aria-hidden="true"><path d="M6 18a4 4 0 0 1 4-4h14l6 7h24a4 4 0 0 1 4 4v23a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4z"/></svg>';
@@ -20,7 +25,7 @@ const els = {
   grid: $("grid"), status: $("status"), count: $("count"), hint: $("hint"),
   sort: $("sort"), reload: $("reload"), logout: $("logout"),
   pathbar: $("pathbar"), back: $("back"), crumb: $("crumb"),
-  player: $("player"), pvideo: $("pvideo"), ptitle: $("ptitle"), pmsg: $("pmsg"), pclose: $("pclose"),
+  player: $("player"), pvideo: $("pvideo"), pimg: $("pimg"), ptitle: $("ptitle"), pmsg: $("pmsg"), pclose: $("pclose"),
 };
 
 /* ---------- Zustand ---------- */
@@ -166,13 +171,13 @@ async function loadFolder(path, push) {
       next = page["@odata.nextLink"] || null;
     }
     if (token !== loadToken) return; // inzwischen wurde ein anderer Ordner geöffnet
-    items = all.filter((it) => it.folder || (it.file && /\.mp4$/i.test(it.name || "")));
+    items = all.filter((it) => it.folder || (it.file && (VIDEO_RE.test(it.name || "") || IMAGE_RE.test(it.name || ""))));
     els.sort.hidden = false;
     els.reload.hidden = false;
     els.logout.hidden = false;
     setStatus();
     if (items.length === 0) {
-      showMessage("Hier gibt es keine Unterordner und keine MP4-Videos.");
+      showMessage("Hier gibt es keine Unterordner, MP4-Videos oder Bilder.");
       return;
     }
     els.hint.hidden = false;
@@ -238,9 +243,12 @@ function dateText(iso) {
 function sorted() {
   // Ordner stehen immer oben und sind nach Namen sortiert, danach die Videos.
   const folders = items.filter((it) => it.folder).sort((a, b) => collator.compare(a.name, b.name));
-  const videos = items.filter((it) => !it.folder);
+  const videos = items.filter((it) => !it.folder); // Videos und Bilder
   if (sortMode === "date") {
     videos.sort((a, b) => String(b.lastModifiedDateTime).localeCompare(String(a.lastModifiedDateTime)));
+  } else if (sortMode === "size") {
+    // Größte Datei zuerst; bei gleicher Größe nach Namen.
+    videos.sort((a, b) => (b.size || 0) - (a.size || 0) || collator.compare(a.name, b.name));
   } else {
     videos.sort((a, b) => collator.compare(a.name, b.name));
   }
@@ -256,10 +264,12 @@ function thumbUrl(item) {
 
 function countText(list) {
   const nf = list.filter((it) => it.folder).length;
-  const nv = list.length - nf;
+  const ni = list.filter(isImage).length;
+  const nv = list.length - nf - ni;
   const parts = [];
   if (nf) parts.push(nf + " Ordner");
   if (nv) parts.push(nv + (nv === 1 ? " Video" : " Videos"));
+  if (ni) parts.push(ni + (ni === 1 ? " Bild" : " Bilder"));
   return parts.join(" · ");
 }
 
@@ -269,13 +279,14 @@ function render() {
   const frag = document.createDocumentFragment();
   for (const item of list) {
     const isFolder = !!item.folder;
+    const isImg = isImage(item);
     const tile = document.createElement("div");
     tile.className = "tile" + (isFolder ? " folder" : "");
     tile.setAttribute("role", "option");
     tile.tabIndex = 0;
     tile.dataset.id = item.id;
     tile.setAttribute("aria-selected", item.id === selectedId ? "true" : "false");
-    tile.setAttribute("aria-label", (isFolder ? "Ordner " : "Video ") + item.name);
+    tile.setAttribute("aria-label", (isFolder ? "Ordner " : isImg ? "Bild " : "Video ") + item.name);
 
     const ph = document.createElement("div");
     ph.className = "ph";
@@ -283,7 +294,7 @@ function render() {
     if (isFolder) {
       ph.innerHTML = FOLDER_SVG; // feste, eigene Grafik ohne Fremddaten
     } else {
-      ph.textContent = "▶";
+      ph.textContent = isImg ? "🖼" : "▶";
     }
     tile.append(ph);
 
@@ -305,7 +316,7 @@ function render() {
     cap.className = "cap";
     const name = document.createElement("div");
     name.className = "name";
-    name.textContent = isFolder ? item.name : item.name.replace(/\.mp4$/i, "");
+    name.textContent = isFolder ? item.name : item.name.replace(VIDEO_RE, "").replace(IMAGE_RE, "");
     const meta = document.createElement("div");
     meta.className = "meta";
     if (isFolder) {
@@ -319,8 +330,8 @@ function render() {
     const pb = document.createElement("button");
     pb.type = "button";
     pb.className = "playbtn";
-    pb.setAttribute("aria-label", (isFolder ? "Öffnen: " : "Abspielen: ") + item.name);
-    pb.textContent = isFolder ? "›" : "▶";
+    pb.setAttribute("aria-label", (isFolder ? "Öffnen: " : isImg ? "Anzeigen: " : "Abspielen: ") + item.name);
+    pb.textContent = isFolder ? "›" : isImg ? "⤢" : "▶";
 
     tile.append(cap, pb);
     frag.append(tile);
@@ -335,7 +346,7 @@ function select(id) {
   }
 }
 
-/* Doppeltippen: Ordner öffnen oder Video abspielen */
+/* Doppeltippen: Ordner öffnen, Video abspielen oder Bild anzeigen */
 function activate(id) {
   const item = items.find((x) => x.id === id);
   if (!item) return;
@@ -460,20 +471,30 @@ async function play(id) {
   const item = items.find((x) => x.id === id);
   if (!item || item.folder) return;
   const token = ++playToken;
-  const elementFs = enterFullscreen();
+  const isImg = isImage(item);
+  // Videos starten im Vollbild; Bilder werden im Anzeigefenster gezeigt.
+  const elementFs = isImg ? false : enterFullscreen();
   els.ptitle.textContent = item.name;
   els.pmsg.hidden = false;
   els.pmsg.className = "msg";
-  els.pmsg.textContent = "Lade Video …";
+  els.pmsg.textContent = isImg ? "Lade Bild …" : "Lade Video …";
   els.player.hidden = false;
+  els.pvideo.hidden = isImg;
+  els.pimg.hidden = !isImg;
   els.pvideo.removeAttribute("src");
   els.pvideo.load();
+  els.pimg.removeAttribute("src");
   try {
     // Bei jedem Start eine frische, kurzlebige Download-URL holen. Sie wird nirgends gespeichert.
     const data = await graph("/me/drive/items/" + encodeURIComponent(id));
     if (token !== playToken || !data) return;
     const url = data["@microsoft.graph.downloadUrl"];
     if (!url) throw new Error("Microsoft hat keine Download-Adresse geliefert.");
+    if (isImg) {
+      els.pimg.alt = item.name;
+      els.pimg.src = url; // Meldung verschwindet, sobald das Bild geladen ist
+      return;
+    }
     els.pvideo.src = url;
     els.pmsg.hidden = true;
     if (!elementFs) {
@@ -484,7 +505,7 @@ async function play(id) {
     if (token !== playToken) return;
     els.pmsg.hidden = false;
     els.pmsg.className = "msg err";
-    els.pmsg.textContent = "Video konnte nicht geladen werden: " + (e.message || e);
+    els.pmsg.textContent = (isImg ? "Bild" : "Video") + " konnte nicht geladen werden: " + (e.message || e);
   }
 }
 
@@ -495,8 +516,17 @@ els.pvideo.addEventListener("error", () => {
   els.pmsg.textContent = "Das Video lässt sich in diesem Browser nicht abspielen.";
 });
 
+els.pimg.addEventListener("load", () => { els.pmsg.hidden = true; });
+els.pimg.addEventListener("error", () => {
+  if (els.player.hidden || !els.pimg.getAttribute("src")) return;
+  els.pmsg.hidden = false;
+  els.pmsg.className = "msg err";
+  els.pmsg.textContent = "Das Bild lässt sich in diesem Browser nicht anzeigen.";
+});
+
 function closePlayer() {
   playToken++;
+  els.pimg.removeAttribute("src");
   fsRequested = false;
   exitFullscreen();
   els.pvideo.pause();
