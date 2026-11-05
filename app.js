@@ -250,7 +250,8 @@ function sorted() {
 function thumbUrl(item) {
   const t = item.thumbnails && item.thumbnails[0];
   if (!t) return null;
-  return (t.medium && t.medium.url) || (t.large && t.large.url) || (t.small && t.small.url) || null;
+  // Größte Vorschau zuerst (large = bis ca. 800 px), kleinere nur als Rückfall.
+  return (t.large && t.large.url) || (t.medium && t.medium.url) || (t.small && t.small.url) || null;
 }
 
 function countText(list) {
@@ -412,10 +413,54 @@ els.logout.addEventListener("click", () => {
 });
 
 /* ---------- Abspielen ---------- */
+let fsRequested = false;
+
+// Muss direkt im Tipp/Klick aufgerufen werden (vor dem ersten await), sonst verweigert der Browser den Vollbildmodus.
+function enterFullscreen() {
+  const el = els.player;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!req) return false;
+  try {
+    const p = req.call(el);
+    fsRequested = true;
+    if (p && p.catch) p.catch(() => { fsRequested = false; });
+  } catch (_) {
+    fsRequested = false;
+    return false;
+  }
+  return true;
+}
+
+function exitFullscreen() {
+  const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+  if (!fsEl) return;
+  const ex = document.exitFullscreen || document.webkitExitFullscreen;
+  try { const p = ex.call(document); if (p && p.catch) p.catch(() => {}); } catch (_) { /* nicht kritisch */ }
+}
+
+// iPhone-Safari kann nur das Video selbst in den Vollbildmodus schalten.
+function enterVideoFullscreen() {
+  const v = els.pvideo;
+  if (v.webkitEnterFullscreen) {
+    try { v.webkitEnterFullscreen(); } catch (_) { /* Browser verweigert: Video läuft dann im Player-Fenster */ }
+  }
+}
+
+function onFullscreenChange() {
+  const active = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  // Wer den Vollbildmodus verlässt, kommt zurück zu den Kacheln.
+  if (!active && fsRequested && !els.player.hidden) closePlayer();
+  if (!active) fsRequested = false;
+}
+document.addEventListener("fullscreenchange", onFullscreenChange);
+document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+els.pvideo.addEventListener("webkitendfullscreen", () => { if (!els.player.hidden) closePlayer(); });
+
 async function play(id) {
   const item = items.find((x) => x.id === id);
   if (!item || item.folder) return;
   const token = ++playToken;
+  const elementFs = enterFullscreen();
   els.ptitle.textContent = item.name;
   els.pmsg.hidden = false;
   els.pmsg.className = "msg";
@@ -431,6 +476,9 @@ async function play(id) {
     if (!url) throw new Error("Microsoft hat keine Download-Adresse geliefert.");
     els.pvideo.src = url;
     els.pmsg.hidden = true;
+    if (!elementFs) {
+      els.pvideo.addEventListener("loadedmetadata", enterVideoFullscreen, { once: true });
+    }
     try { await els.pvideo.play(); } catch (_) { /* Browser verlangt ggf. Tippen auf Play */ }
   } catch (e) {
     if (token !== playToken) return;
@@ -449,6 +497,8 @@ els.pvideo.addEventListener("error", () => {
 
 function closePlayer() {
   playToken++;
+  fsRequested = false;
+  exitFullscreen();
   els.pvideo.pause();
   els.pvideo.removeAttribute("src");
   els.pvideo.load();
