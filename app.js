@@ -407,6 +407,7 @@ window.addEventListener("popstate", (e) => {
 
 els.reload.addEventListener("click", () => loadFolder(currentPath, false));
 els.logout.addEventListener("click", () => {
+  try { sessionStorage.removeItem(GATE_KEY); } catch (_) { /* nicht kritisch */ }
   pca.logoutRedirect({ account: pca.getActiveAccount(), postLogoutRedirectUri: REDIRECT_URI });
 });
 
@@ -459,4 +460,48 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !els.player.hidden) closePlayer();
 });
 
-start();
+/* ---------- Code-Sperre ---------- */
+// Bequemlichkeits-Sperre vor dem Start der App. Kein Ersatz für die Microsoft-Anmeldung:
+// Der Code steht nur als Hash im Quelltext, ein 4-stelliger Code ist aber technisch leicht zu knacken.
+const PIN_HASH = "07e6809a7d52265fdbb3d6b9b825c439d6cfa620747a5aade457a7a3bf43f12a";
+const GATE_KEY = "vk_gate_ok";
+
+function gateOpen() {
+  try { return sessionStorage.getItem(GATE_KEY) === "1"; } catch (_) { return false; }
+}
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function runGate() {
+  const gate = $("gate"), form = $("gateform"), pin = $("pin"), err = $("gateerr");
+  gate.hidden = false;
+  pin.focus();
+  let fails = 0;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.textContent = "";
+    let ok = false;
+    try {
+      ok = (await sha256Hex("video-kacheln|" + pin.value.trim())) === PIN_HASH;
+    } catch (_) {
+      err.textContent = "Prüfung hier nicht möglich (HTTPS erforderlich).";
+      return;
+    }
+    if (ok) {
+      try { sessionStorage.setItem(GATE_KEY, "1"); } catch (_) { /* dann fragt die App nach dem Microsoft-Login erneut */ }
+      gate.hidden = true;
+      start();
+    } else {
+      fails += 1;
+      pin.value = "";
+      err.textContent = "Falscher Code.";
+      form.querySelector("button").disabled = true;
+      setTimeout(() => { form.querySelector("button").disabled = false; pin.focus(); }, Math.min(1000 * fails, 5000));
+    }
+  });
+}
+
+if (gateOpen()) start(); else runGate();

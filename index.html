@@ -97,6 +97,15 @@
   #player video { flex: 1 1 0; min-height: 0; width: 100%; background: #000; }
   #player .msg { color: #fff; padding: 0 16px 16px; font-size: .9rem; }
   #player .msg.err { color: #ff9c93; }
+  #gate { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: grid; place-items: center; padding: 20px; }
+  #gate form { width: 100%; max-width: 320px; display: grid; gap: 12px; }
+  #gate h2 { margin: 0; font-size: 1.1rem; }
+  #gate input {
+    font: inherit; font-size: 1.4rem; letter-spacing: .3em; text-align: center; padding: 12px; border-radius: 10px;
+    border: 1px solid var(--surface-2); background: var(--surface); color: var(--text); width: 100%;
+  }
+  #gate input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  #gate .err { color: var(--danger); margin: 0; min-height: 1.4em; font-size: .9rem; }
 </style>
 </head>
 <body>
@@ -129,8 +138,17 @@
   <div class="msg" id="pmsg" hidden></div>
 </div>
 
+<div id="gate" hidden>
+  <form id="gateform" autocomplete="off">
+    <h2>Video-Kacheln</h2>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="off" aria-label="Zugangscode" placeholder="Code">
+    <button class="btn primary" type="submit">Weiter</button>
+    <p class="err" id="gateerr" role="alert"></p>
+  </form>
+</div>
+
 <script src="./lib/msal-browser.min.js"></script>
 <!-- Versionsnummer: bei jeder Änderung an app.js erhöhen, damit Browser die neue Datei laden -->
-<script src="./app.js?v=2"></script>
+<script src="./app.js?v=3"></script>
 </body>
 </html>
