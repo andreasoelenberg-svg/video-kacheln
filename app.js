@@ -544,6 +544,14 @@ document.addEventListener("keydown", (e) => {
 });
 
 
+/* ---------- Version ---------- */
+// Bei jeder Änderung: APP_VERSION erhöhen (gleiche Zahl wie ?v= in index.html) und APP_CHANGES neu schreiben.
+const APP_VERSION = 9;
+const APP_DATE = "05.11.2026";
+const APP_CHANGES = [
+  "Versionsnummer und Kurzbeschreibung der letzten Änderung im Code-Fenster",
+];
+
 /* ---------- Code-Sperre ---------- */
 // Bequemlichkeits-Sperre vor dem Start der App. Kein Ersatz für die Microsoft-Anmeldung:
 // Der Code steht nur als Hash im Quelltext, ein 4-stelliger Code ist aber technisch leicht zu knacken.
@@ -561,6 +569,17 @@ async function sha256Hex(text) {
 
 function runGate() {
   const gate = $("gate"), form = $("gateform"), pin = $("pin"), err = $("gateerr");
+  const info = $("gateinfo");
+  info.replaceChildren();
+  const head = document.createElement("div");
+  head.textContent = "Version " + APP_VERSION + " · " + APP_DATE;
+  const ul = document.createElement("ul");
+  for (const c of APP_CHANGES) {
+    const li = document.createElement("li");
+    li.textContent = c;
+    ul.append(li);
+  }
+  info.append(head, ul);
   gate.hidden = false;
   pin.focus();
   let fails = 0;

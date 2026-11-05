@@ -109,6 +109,11 @@
   #player .msg.err { color: #ff9c93; }
   #gate { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: grid; place-items: center; padding: 20px; }
   #gate form { width: 100%; max-width: 320px; display: grid; gap: 12px; }
+  #gate .info {
+    position: absolute; top: max(14px, env(safe-area-inset-top)); left: 16px; right: 16px;
+    font-size: .72rem; line-height: 1.4; color: var(--muted);
+  }
+  #gate .info ul { margin: 4px 0 0; padding-left: 1.1em; }
   #gate h2 { margin: 0; font-size: 1.1rem; }
   #gate input {
     font: inherit; font-size: 1.4rem; letter-spacing: .3em; text-align: center; padding: 12px; border-radius: 10px;
@@ -155,6 +160,7 @@
 </div>
 
 <div id="gate" hidden>
+  <div class="info" id="gateinfo"></div>
   <form id="gateform" autocomplete="off">
     <h2>Video-Kacheln</h2>
     <input id="pin" type="password" inputmode="numeric" autocomplete="off" aria-label="Zugangscode" placeholder="Code">
@@ -165,6 +171,6 @@
 
 <script src="./lib/msal-browser.min.js"></script>
 <!-- Versionsnummer: bei jeder Änderung an app.js erhöhen, damit Browser die neue Datei laden -->
-<script src="./app.js?v=8"></script>
+<script src="./app.js?v=9"></script>
 </body>
 </html>
