@@ -471,6 +471,7 @@ async function play(id) {
   fileInfo = "";
   lastDownloadUrl = "";
   lastItemName = item.name;
+  vlcTried = false;
   if (blobCtl) { blobCtl.abort(); blobCtl = null; }
   revokeBlob();
   // Blätterliste: alle Videos und Bilder des Ordners in der aktuell gewählten Sortierung.
@@ -532,6 +533,36 @@ let lastDownloadUrl = "";
 let lastItemName = "";
 let blobCtl = null;
 
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); // iPadOS meldet sich als Mac
+let vlcTried = false;
+
+function vlcStreamUrl() {
+  return "vlc-x-callback://x-callback-url/stream?url=" + encodeURIComponent(lastDownloadUrl);
+}
+
+function vlcLaunch(url) {
+  window.location.href = url;
+}
+
+// Auf iPhone/iPad: Kann der Browser das Video nicht abspielen, startet es automatisch in der VLC-App.
+function autoVlc() {
+  vlcTried = true;
+  els.pmsg.hidden = false;
+  els.pmsg.className = "msg";
+  els.pmsg.replaceChildren();
+  const l1 = document.createElement("div");
+  l1.textContent = "Der Browser kann dieses Video nicht abspielen. Es wird in VLC geöffnet …";
+  const l2 = document.createElement("div");
+  l2.style.cssText = "font-size:.8rem;opacity:.8;margin-top:6px";
+  l2.textContent = "Falls VLC nicht startet, auf „In VLC abspielen“ tippen.";
+  els.pmsg.append(l1);
+  const vb = vlcBox();
+  if (vb) els.pmsg.append(vb);
+  els.pmsg.append(l2);
+  vlcLaunch(vlcStreamUrl());
+}
+
 // Knöpfe für die VLC-App (iPhone/iPad). Adressen laut VLC-Dokumentation: vlc-x-callback://x-callback-url/stream bzw. /download.
 function vlcBox() {
   if (!lastDownloadUrl) return null;
@@ -548,7 +579,7 @@ function vlcBox() {
   };
   const u = encodeURIComponent(lastDownloadUrl);
   box.append(
-    mk("In VLC abspielen", "vlc-x-callback://x-callback-url/stream?url=" + u),
+    mk("In VLC abspielen", vlcStreamUrl()),
     mk("In VLC laden", "vlc-x-callback://x-callback-url/download?url=" + u + "&filename=" + encodeURIComponent(lastItemName || "video.mp4"))
   );
   return box;
@@ -726,6 +757,10 @@ els.pvideo.addEventListener("error", async () => {
   const src = els.pvideo.getAttribute("src");
   if (els.player.hidden || !src) return;
   const token = playToken;
+  if (IS_IOS && lastDownloadUrl && !src.startsWith("blob:")) {
+    if (!vlcTried) autoVlc(); // nur einmal pro Video; kein Komplett-Download mehr auf iPhone/iPad
+    return;
+  }
   if (!blobTried && !src.startsWith("blob:")) {
     blobTried = true;
     els.pmsg.hidden = false;
@@ -823,7 +858,7 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "Bei Videofehler: Knöpfe „In VLC abspielen“ und „In VLC laden“ (VLC-App auf dem iPhone)",
+  "iPhone/iPad: Kann der Browser ein Video nicht abspielen, startet es automatisch in VLC",
 ];
 
 /* ---------- Code-Sperre ---------- */
