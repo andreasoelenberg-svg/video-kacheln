@@ -42,8 +42,9 @@ async function start() {
       postLogoutRedirectUri: REDIRECT_URI,
       navigateToLoginRequestUrl: false,
     },
-    // Token bleiben im Arbeitsspeicher, nicht im Browser-Speicher.
-    cache: { cacheLocation: "memoryStorage" },
+    // Die Anmelde-Daten liegen nur im sessionStorage dieses Tabs und verschwinden, wenn der Tab geschlossen wird.
+    // (memoryStorage geht mit der Weiterleitungs-Anmeldung nicht, MSAL meldet dann in_mem_redirect_unavailable.)
+    cache: { cacheLocation: "sessionStorage" },
   });
 
   try {
@@ -64,6 +65,16 @@ async function start() {
   await loadFolder();
 }
 
+async function login() {
+  try {
+    await pca.loginRedirect({ scopes: SCOPES, prompt: "select_account" });
+  } catch (e) {
+    // Fehler sichtbar machen, statt sie still zu verschlucken.
+    const code = e && e.errorCode ? e.errorCode + ": " : "";
+    showError("Die Anmeldung konnte nicht gestartet werden. " + code + ((e && e.message) || e), true);
+  }
+}
+
 function showLogin() {
   setStatus();
   const p = document.createElement("p");
@@ -72,7 +83,7 @@ function showLogin() {
   b.className = "btn primary";
   b.type = "button";
   b.textContent = "Mit Microsoft anmelden";
-  b.addEventListener("click", () => pca.loginRedirect({ scopes: SCOPES, prompt: "select_account" }));
+  b.addEventListener("click", login);
   els.status.append(p, b);
 }
 
@@ -172,7 +183,7 @@ function showError(text, withRetry) {
     b.className = "btn primary";
     b.type = "button";
     b.textContent = "Neu anmelden";
-    b.addEventListener("click", () => pca.loginRedirect({ scopes: SCOPES, prompt: "select_account" }));
+    b.addEventListener("click", login);
     els.status.append(b);
   }
 }
