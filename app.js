@@ -466,6 +466,10 @@ async function play(id) {
   const item = items.find((x) => x.id === id);
   if (!item || item.folder) return;
   const token = ++playToken;
+  blobTried = false;
+  probeInfo = "";
+  lastDownloadUrl = "";
+  revokeBlob();
   // Blätterliste: alle Videos und Bilder des Ordners in der aktuell gewählten Sortierung.
   viewList = sorted().filter((it) => !it.folder);
   viewIndex = viewList.findIndex((it) => it.id === id);
@@ -496,6 +500,7 @@ async function play(id) {
       els.pimg.src = url; // Meldung verschwindet, sobald das Bild geladen ist
       return;
     }
+    lastDownloadUrl = url;
     els.pvideo.src = url;
     els.pmsg.hidden = true;
     try { await els.pvideo.play(); } catch (_) { /* Browser verlangt ggf. Tippen auf Play */ }
@@ -514,31 +519,77 @@ const MEDIA_ERRORS = {
   4: "Format/Codec nicht unterstützt oder Adresse nicht abrufbar",
 };
 
-// Zeigt, was der Browser wirklich meldet, statt nur einer pauschalen Fehlermeldung.
-els.pvideo.addEventListener("error", () => {
-  const src = els.pvideo.getAttribute("src");
-  if (els.player.hidden || !src) return;
+// Rückfall: Lehnt der Browser die Adresse direkt ab (z. B. Safari bei falschem Content-Type), wird die Datei
+// komplett geladen und als Video/mp4 abgespielt.
+let blobTried = false;
+let blobUrl = null;
+let probeInfo = "";
+let lastDownloadUrl = "";
+
+function revokeBlob() {
+  if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (_) { /* nicht kritisch */ } blobUrl = null; }
+}
+
+function showVideoError() {
   const err = els.pvideo.error;
   const code = err && err.code ? err.code : 0;
   const can = (t) => els.pvideo.canPlayType(t) || "nein";
   els.pmsg.hidden = false;
   els.pmsg.className = "msg err";
   els.pmsg.replaceChildren();
-  const l1 = document.createElement("div");
-  l1.textContent = "Das Video lässt sich in diesem Browser nicht abspielen.";
-  const l2 = document.createElement("div");
-  l2.textContent = "Browser-Meldung: " + (code ? "Code " + code + " – " + (MEDIA_ERRORS[code] || "unbekannt") : "keine") +
-    (err && err.message ? " (" + err.message + ")" : "");
-  const l3 = document.createElement("div");
-  l3.textContent = "Dieser Browser kann laut eigener Angabe: H.264 " + can('video/mp4; codecs="avc1.640028"') +
-    ", H.265 " + can('video/mp4; codecs="hvc1.1.6.L93.B0"') + ", AV1 " + can('video/mp4; codecs="av01.0.05M.08"');
-  const link = document.createElement("a");
-  link.href = src; // frische, kurzlebige Adresse; gilt nur ca. 1 Stunde
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.textContent = "Datei direkt öffnen (neuer Tab)";
-  link.style.color = "inherit";
-  els.pmsg.append(l1, l2, l3, link);
+  const lines = [
+    "Das Video lässt sich in diesem Browser nicht abspielen.",
+    "Browser-Meldung: " + (code ? "Code " + code + " – " + (MEDIA_ERRORS[code] || "unbekannt") : "keine") +
+      (err && err.message ? " (" + err.message + ")" : ""),
+    "Dieser Browser kann laut eigener Angabe: H.264 " + can('video/mp4; codecs="avc1.640028"') +
+      ", H.265 " + can('video/mp4; codecs="hvc1.1.6.L93.B0"') + ", AV1 " + can('video/mp4; codecs="av01.0.05M.08"'),
+  ];
+  if (probeInfo) lines.push(probeInfo);
+  for (const t of lines) {
+    const d = document.createElement("div");
+    d.textContent = t;
+    els.pmsg.append(d);
+  }
+  if (lastDownloadUrl) {
+    const link = document.createElement("a");
+    link.href = lastDownloadUrl; // frische, kurzlebige Adresse; gilt nur ca. 1 Stunde
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Datei direkt öffnen (neuer Tab)";
+    link.style.color = "inherit";
+    els.pmsg.append(link);
+  }
+}
+
+els.pvideo.addEventListener("error", async () => {
+  const src = els.pvideo.getAttribute("src");
+  if (els.player.hidden || !src) return;
+  const token = playToken;
+  if (!blobTried && !src.startsWith("blob:")) {
+    blobTried = true;
+    els.pmsg.hidden = false;
+    els.pmsg.className = "msg";
+    els.pmsg.textContent = "Direktwiedergabe nicht möglich, lade die Datei komplett …";
+    try {
+      const r = await fetch(src);
+      const len = r.headers.get("content-length");
+      probeInfo = "Abruf: Status " + r.status + ", Content-Type " + (r.headers.get("content-type") || "unbekannt") +
+        (len ? ", " + sizeText(Number(len)) : "");
+      if (!r.ok) throw new Error("Status " + r.status);
+      const whole = await r.blob();
+      if (token !== playToken) return;
+      revokeBlob();
+      blobUrl = URL.createObjectURL(whole.slice(0, whole.size, "video/mp4"));
+      els.pvideo.src = blobUrl;
+      els.pmsg.hidden = true;
+      try { await els.pvideo.play(); } catch (_) { /* ggf. Tippen auf Play */ }
+      return;
+    } catch (e) {
+      if (token !== playToken) return;
+      probeInfo = probeInfo || "Abruf nicht möglich: " + ((e && e.message) || e);
+    }
+  }
+  showVideoError();
 });
 
 els.pimg.addEventListener("load", () => { els.pmsg.hidden = true; });
@@ -551,6 +602,7 @@ els.pimg.addEventListener("error", () => {
 
 function closePlayer() {
   playToken++;
+  revokeBlob();
   els.pimg.removeAttribute("src");
   fsRequested = false;
   exitFullscreen();
@@ -576,7 +628,7 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "Selbstprüfung beim Start: veraltete Seite lädt sich automatisch in der neuen Version (kein privater Tab mehr nötig)",
+  "Video: bei Ablehnung durch den Browser (Code 4) Rückfall über komplettes Laden als Video/mp4, Fehlerdetails mit Abruf-Status",
 ];
 
 /* ---------- Code-Sperre ---------- */
