@@ -507,11 +507,38 @@ async function play(id) {
   }
 }
 
+const MEDIA_ERRORS = {
+  1: "Wiedergabe abgebrochen",
+  2: "Netzwerkfehler beim Laden",
+  3: "Dekodierfehler (Datei beschädigt oder Videoprofil nicht unterstützt)",
+  4: "Format/Codec nicht unterstützt oder Adresse nicht abrufbar",
+};
+
+// Zeigt, was der Browser wirklich meldet, statt nur einer pauschalen Fehlermeldung.
 els.pvideo.addEventListener("error", () => {
-  if (els.player.hidden || !els.pvideo.getAttribute("src")) return;
+  const src = els.pvideo.getAttribute("src");
+  if (els.player.hidden || !src) return;
+  const err = els.pvideo.error;
+  const code = err && err.code ? err.code : 0;
+  const can = (t) => els.pvideo.canPlayType(t) || "nein";
   els.pmsg.hidden = false;
   els.pmsg.className = "msg err";
-  els.pmsg.textContent = "Das Video lässt sich in diesem Browser nicht abspielen.";
+  els.pmsg.replaceChildren();
+  const l1 = document.createElement("div");
+  l1.textContent = "Das Video lässt sich in diesem Browser nicht abspielen.";
+  const l2 = document.createElement("div");
+  l2.textContent = "Browser-Meldung: " + (code ? "Code " + code + " – " + (MEDIA_ERRORS[code] || "unbekannt") : "keine") +
+    (err && err.message ? " (" + err.message + ")" : "");
+  const l3 = document.createElement("div");
+  l3.textContent = "Dieser Browser kann laut eigener Angabe: H.264 " + can('video/mp4; codecs="avc1.640028"') +
+    ", H.265 " + can('video/mp4; codecs="hvc1.1.6.L93.B0"') + ", AV1 " + can('video/mp4; codecs="av01.0.05M.08"');
+  const link = document.createElement("a");
+  link.href = src; // frische, kurzlebige Adresse; gilt nur ca. 1 Stunde
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = "Datei direkt öffnen (neuer Tab)";
+  link.style.color = "inherit";
+  els.pmsg.append(l1, l2, l3, link);
 });
 
 els.pimg.addEventListener("load", () => { els.pmsg.hidden = true; });
@@ -546,10 +573,10 @@ document.addEventListener("keydown", (e) => {
 
 /* ---------- Version ---------- */
 // Bei jeder Änderung: APP_VERSION erhöhen (gleiche Zahl wie ?v= in index.html) und APP_CHANGES neu schreiben.
-const APP_VERSION = 9;
-const APP_DATE = "05.11.2026";
+const APP_VERSION = 10;
+const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "Versionsnummer und Kurzbeschreibung der letzten Änderung im Code-Fenster",
+  "Videofehler zeigt jetzt die echte Browser-Meldung, unterstützte Codecs und einen Link zum direkten Öffnen",
 ];
 
 /* ---------- Code-Sperre ---------- */
