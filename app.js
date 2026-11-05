@@ -468,6 +468,7 @@ async function play(id) {
   const token = ++playToken;
   blobTried = false;
   probeInfo = "";
+  fileInfo = "";
   lastDownloadUrl = "";
   revokeBlob();
   // Blätterliste: alle Videos und Bilder des Ordners in der aktuell gewählten Sortierung.
@@ -524,10 +525,119 @@ const MEDIA_ERRORS = {
 let blobTried = false;
 let blobUrl = null;
 let probeInfo = "";
+let fileInfo = "";
 let lastDownloadUrl = "";
 
 function revokeBlob() {
   if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (_) { /* nicht kritisch */ } blobUrl = null; }
+}
+
+/* ---------- MP4-Analyse (Diagnose und kleine Korrektur) ---------- */
+async function readBytes(blob, start, end) {
+  const part = blob.slice(start, end);
+  if (part.arrayBuffer) return new Uint8Array(await part.arrayBuffer());
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(new Uint8Array(fr.result));
+    fr.onerror = () => rej(fr.error);
+    fr.readAsArrayBuffer(part);
+  });
+}
+const u32 = (b, o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+const cc = (b, o) => String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]);
+
+// Sucht in buf[start,end) entlang einer Kette von Box-Typen; liefert {s: Beginn des Inhalts, e: Ende} oder null.
+function findBox(buf, start, end, path) {
+  let o = start;
+  while (o + 8 <= end) {
+    const size = u32(buf, o);
+    if (size < 8 || o + size > end) return null;
+    if (cc(buf, o + 4) === path[0]) {
+      if (path.length === 1) return { s: o + 8, e: o + size, box: o };
+      return findBox(buf, o + 8, o + size, path.slice(1));
+    }
+    o += size;
+  }
+  return null;
+}
+
+const AVC_PROFILES = { 66: "Baseline", 77: "Main", 88: "Extended", 100: "High", 110: "High 10", 122: "High 4:2:2", 244: "High 4:4:4" };
+
+// Liest Codec, Profil, Auflösung und Aufbau der Datei. Korrigiert, wenn nötig, Codec-Kennungen, die Safari ablehnt.
+async function analyzeMp4(blob) {
+  let pos = 0, moov = null, mdatPos = -1, brand = "";
+  while (pos + 8 <= blob.size) {
+    const h = await readBytes(blob, pos, pos + 16);
+    let size = u32(h, 0);
+    const type = cc(h, 4);
+    let hdr = 8;
+    if (size === 1) { size = u32(h, 8) * 4294967296 + u32(h, 12); hdr = 16; } else if (size === 0) size = blob.size - pos;
+    if (size < hdr) break;
+    if (type === "ftyp") brand = cc(h, 8);
+    if (type === "mdat" && mdatPos < 0) mdatPos = pos;
+    if (type === "moov") moov = { pos, size };
+    pos += size;
+  }
+  if (!moov) return { text: "Datei-Analyse: kein moov-Block gefunden (Datei unvollständig oder kein gewöhnliches MP4)" };
+
+  const buf = await readBytes(blob, moov.pos, moov.pos + moov.size);
+  const parts = [], hints = [];
+  const patches = [];
+  let o = 8;
+  while (o + 8 <= buf.length) {
+    const size = u32(buf, o);
+    if (size < 8) break;
+    if (cc(buf, o + 4) === "trak") {
+      const hdlr = findBox(buf, o + 8, o + size, ["mdia", "hdlr"]);
+      const stsd = findBox(buf, o + 8, o + size, ["mdia", "minf", "stbl", "stsd"]);
+      const tkhd = findBox(buf, o + 8, o + size, ["tkhd"]);
+      const handler = hdlr ? cc(buf, hdlr.s + 8) : "";
+      if (stsd) {
+        const e = stsd.s + 8; // erster Eintrag
+        const esize = u32(buf, e);
+        const fmt = cc(buf, e + 4);
+        if (handler === "vide") {
+          let t = fmt;
+          const kids = [e + 86, e + esize];
+          const avcC = findBox(buf, kids[0], kids[1], ["avcC"]);
+          const hvcC = findBox(buf, kids[0], kids[1], ["hvcC"]);
+          if (avcC) {
+            const p = buf[avcC.s + 1], lvl = buf[avcC.s + 3];
+            t += " " + (AVC_PROFILES[p] || "Profil " + p) + " Level " + (lvl / 10).toFixed(1);
+            if (p >= 110) hints.push("H.264 mit 10 Bit bzw. 4:2:2/4:4:4 (Profil " + (AVC_PROFILES[p] || p) + "): Safari unterstützt H.264 nur mit 8 Bit 4:2:0");
+          }
+          if (hvcC) {
+            const chroma = buf[hvcC.s + 16] & 3, depth = (buf[hvcC.s + 17] & 7) + 8, prof = buf[hvcC.s + 1] & 31;
+            t += " Profil " + prof + ", " + depth + " Bit, Chroma " + ({ 0: "4:0:0", 1: "4:2:0", 2: "4:2:2", 3: "4:4:4" }[chroma]);
+            if (chroma !== 1 || depth > 10) hints.push("HEVC mit " + depth + " Bit / Chroma " + chroma + ": Safari unterstützt nur 4:2:0 mit 8 oder 10 Bit");
+          }
+          if (tkhd) {
+            const v1 = buf[tkhd.s] === 1;
+            const w = u32(buf, tkhd.s + (v1 ? 88 : 76)) >>> 16, hh = u32(buf, tkhd.s + (v1 ? 92 : 80)) >>> 16;
+            if (w && hh) t += " " + w + "×" + hh;
+          }
+          parts.push("Video " + t);
+          if (fmt === "hev1") { patches.push([moov.pos + e + 4, "hvc1"]); hints.push("Kennung hev1 auf hvc1 gesetzt (Safari spielt HEVC nur mit hvc1)"); }
+          if (fmt === "avc3") { patches.push([moov.pos + e + 4, "avc1"]); hints.push("Kennung avc3 auf avc1 gesetzt"); }
+          if (fmt === "av01") hints.push("AV1 wird von diesem Browser laut eigener Angabe nicht unterstützt");
+          if (fmt === "vp09") hints.push("VP9 in MP4 unterstützt Safari nur eingeschränkt");
+        } else if (handler === "soun") {
+          parts.push("Audio " + fmt);
+        }
+      }
+    }
+    o += size;
+  }
+  let text = "Datei-Analyse: " + (parts.join(", ") || "keine Spuren gefunden") +
+    "; Metadaten " + (mdatPos >= 0 && mdatPos < moov.pos ? "am Ende" : "am Anfang") + (brand ? "; Marke " + brand : "");
+  if (hints.length) text += "\nHinweis (aus der Dateistruktur abgeleitet): " + hints.join("; ");
+  let fixed = null;
+  if (patches.length) {
+    const copy = buf.slice();
+    for (const [abs, name] of patches) for (let i = 0; i < 4; i++) copy[abs - moov.pos + i] = name.charCodeAt(i);
+    fixed = new Blob([blob.slice(0, moov.pos), copy, blob.slice(moov.pos + moov.size)], { type: "video/mp4" });
+  }
+  return { text, blob: fixed };
 }
 
 // Lädt die Antwort stückweise und meldet den Fortschritt. Gibt null zurück, wenn inzwischen ein anderes Video läuft.
@@ -567,6 +677,7 @@ function showVideoError() {
       ", H.265 " + can('video/mp4; codecs="hvc1.1.6.L93.B0"') + ", AV1 " + can('video/mp4; codecs="av01.0.05M.08"'),
   ];
   if (probeInfo) lines.push(probeInfo);
+  if (fileInfo) lines.push(...fileInfo.split("\n"));
   for (const t of lines) {
     const d = document.createElement("div");
     d.textContent = t;
@@ -594,10 +705,11 @@ els.pvideo.addEventListener("error", async () => {
     els.pmsg.replaceChildren();
     const label = document.createElement("div");
     label.textContent = "Direktwiedergabe nicht möglich, lade die Datei komplett …";
-    const bar = document.createElement("progress");
-    bar.max = 100;
-    bar.style.cssText = "width:100%;height:14px;margin-top:8px;accent-color:var(--accent)";
-    els.pmsg.append(label, bar);
+    const track = document.createElement("div");
+    track.className = "pbar";
+    const bar = document.createElement("div");
+    track.append(bar);
+    els.pmsg.append(label, track);
     try {
       const r = await fetch(src);
       const len = r.headers.get("content-length");
@@ -607,16 +719,26 @@ els.pvideo.addEventListener("error", async () => {
       const whole = await readWithProgress(r, token, (got, total) => {
         if (total) {
           const pct = Math.min(100, Math.floor((got / total) * 100));
-          bar.value = pct;
+          track.classList.remove("indet");
+          bar.style.width = pct + "%";
           label.textContent = "Lade Datei … " + pct + " % (" + sizeText(got) + " von " + sizeText(total) + ")";
         } else {
-          bar.removeAttribute("value"); // unbekannte Gesamtgröße: laufender Balken
+          track.classList.add("indet"); // unbekannte Gesamtgröße: laufender Balken
           label.textContent = "Lade Datei … " + sizeText(got);
         }
       });
       if (!whole || token !== playToken) return;
+      let playable = whole;
+      try {
+        const res = await analyzeMp4(whole);
+        fileInfo = res.text;
+        if (res.blob) playable = res.blob;
+      } catch (_) {
+        fileInfo = "Datei-Analyse nicht möglich";
+      }
+      if (token !== playToken) return;
       revokeBlob();
-      blobUrl = URL.createObjectURL(whole);
+      blobUrl = URL.createObjectURL(playable);
       els.pvideo.src = blobUrl;
       els.pmsg.hidden = true;
       try { await els.pvideo.play(); } catch (_) { /* ggf. Tippen auf Play */ }
@@ -665,7 +787,8 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "Fortschrittsbalken (Prozent und MB), wenn das Video komplett geladen werden muss",
+  "Fortschrittsbalken jetzt sichtbar (eigene Darstellung)",
+  "Datei-Analyse: zeigt Codec, Profil und Auflösung des Videos; korrigiert hev1 auf hvc1 für Safari",
 ];
 
 /* ---------- Code-Sperre ---------- */
