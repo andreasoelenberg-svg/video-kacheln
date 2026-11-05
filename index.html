@@ -56,6 +56,8 @@
     padding: 8px 12px; min-height: 40px; cursor: pointer;
   }
   .seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--text); font-weight: 600; }
+  #pathbar { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; min-width: 0; }
+  #crumb { color: var(--muted); font-size: .9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #hint { color: var(--muted); font-size: .85rem; margin: 0 0 12px; }
   #status { margin: 28px 0; }
   #status p { margin: 0 0 12px; }
@@ -77,6 +79,8 @@
   }
   .tile .name { font-size: .85rem; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
   .tile .meta { font-size: .72rem; opacity: .8; margin-top: 2px; }
+  .tile.folder { background: var(--surface-2); }
+  .tile.folder .ph { color: var(--accent); }
   .tile[aria-selected="true"] { outline: 3px solid var(--accent); outline-offset: -3px; }
   .tile .playbtn {
     position: absolute; top: 8px; right: 8px; width: 40px; height: 40px; border-radius: 50%; border: 0;
@@ -108,7 +112,11 @@
   <button class="btn" id="logout" type="button" hidden>Abmelden</button>
 </header>
 
-<p id="hint" hidden>Doppeltippen (oder Doppelklick) spielt ein Video ab.</p>
+<div id="pathbar" hidden>
+  <button class="btn" id="back" type="button" hidden>&larr; Zurück</button>
+  <span id="crumb"></span>
+</div>
+<p id="hint" hidden>Doppeltippen (oder Doppelklick) öffnet einen Ordner oder spielt ein Video ab.</p>
 <div id="status"></div>
 <div id="grid" role="listbox" aria-label="Videos"></div>
 
@@ -122,6 +130,7 @@
 </div>
 
 <script src="./lib/msal-browser.min.js"></script>
-<script src="./app.js"></script>
+<!-- Versionsnummer: bei jeder Änderung an app.js erhöhen, damit Browser die neue Datei laden -->
+<script src="./app.js?v=2"></script>
 </body>
 </html>
