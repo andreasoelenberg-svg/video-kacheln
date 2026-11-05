@@ -8,7 +8,6 @@ const REDIRECT_URI = "https://andreasoelenberg-svg.github.io/video-kacheln/";
 const ROOT_PATH = "KI pic/Self KI";
 const SCOPES = ["Files.Read"];
 const GRAPH = "https://graph.microsoft.com/v1.0";
-const DOUBLE_TAP_MS = 400;
 
 // Bildformate, die gängige Browser direkt anzeigen können (HEIC u. Ä. bewusst nicht dabei).
 const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|avif)$/i;
@@ -34,7 +33,6 @@ let items = [];
 let currentPath = ROOT_PATH;
 let sortMode = "name";
 let selectedId = null;
-let lastTap = { id: null, t: 0 };
 let playToken = 0;
 let loadToken = 0;
 
@@ -160,7 +158,6 @@ async function loadFolder(path, push) {
   els.grid.replaceChildren();
   els.count.textContent = "";
   selectedId = null;
-  lastTap = { id: null, t: 0 };
   try {
     const all = [];
     let next = folderUrl(path);
@@ -346,7 +343,7 @@ function select(id) {
   }
 }
 
-/* Doppeltippen: Ordner öffnen, Video abspielen oder Bild anzeigen */
+/* Ordner öffnen, Video abspielen oder Bild anzeigen */
 function activate(id) {
   const item = items.find((x) => x.id === id);
   if (!item) return;
@@ -365,19 +362,12 @@ els.grid.addEventListener("pointerup", (e) => {
   const id = tile.dataset.id;
   if (e.target.closest(".playbtn")) {
     select(id);
-    lastTap = { id: null, t: 0 };
     activate(id);
     return;
   }
-  const now = performance.now();
-  if (lastTap.id === id && now - lastTap.t < DOUBLE_TAP_MS) {
-    lastTap = { id: null, t: 0 };
-    select(id);
-    activate(id);
-  } else {
-    select(id);
-    lastTap = { id, t: now };
-  }
+  // Ein Tipp genügt: Ordner öffnen, Video abspielen oder Bild anzeigen.
+  select(id);
+  activate(id);
 });
 
 els.grid.addEventListener("keydown", (e) => {
@@ -425,6 +415,19 @@ els.logout.addEventListener("click", () => {
 
 /* ---------- Abspielen ---------- */
 let fsRequested = false;
+let viewList = [];
+let viewIndex = -1;
+
+// Blättern: Wisch nach links = vorheriges, Wisch nach rechts = nächstes Element (so gewünscht).
+// Zum Vertauschen den Wert auf +1 ändern.
+const SWIPE_LEFT_STEP = -1;
+const SWIPE_MIN_PX = 60;
+
+function step(dir) {
+  const next = viewIndex + dir;
+  if (viewIndex < 0 || next < 0 || next >= viewList.length) return; // Anfang bzw. Ende der Liste
+  play(viewList[next].id);
+}
 
 // Muss direkt im Tipp/Klick aufgerufen werden (vor dem ersten await), sonst verweigert der Browser den Vollbildmodus.
 function enterFullscreen() {
@@ -471,10 +474,13 @@ async function play(id) {
   const item = items.find((x) => x.id === id);
   if (!item || item.folder) return;
   const token = ++playToken;
+  // Blätterliste: alle Videos und Bilder des Ordners in der aktuell gewählten Sortierung.
+  viewList = sorted().filter((it) => !it.folder);
+  viewIndex = viewList.findIndex((it) => it.id === id);
   const isImg = isImage(item);
   // Videos starten im Vollbild; Bilder werden im Anzeigefenster gezeigt.
   const elementFs = isImg ? false : enterFullscreen();
-  els.ptitle.textContent = item.name;
+  els.ptitle.textContent = (viewIndex >= 0 ? (viewIndex + 1) + " / " + viewList.length + " · " : "") + item.name;
   els.pmsg.hidden = false;
   els.pmsg.className = "msg";
   els.pmsg.textContent = isImg ? "Lade Bild …" : "Lade Video …";
@@ -537,8 +543,35 @@ function closePlayer() {
 
 els.pclose.addEventListener("click", closePlayer);
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !els.player.hidden) closePlayer();
+  if (els.player.hidden) return;
+  if (e.key === "Escape") closePlayer();
+  else if (e.key === "ArrowLeft") step(SWIPE_LEFT_STEP);
+  else if (e.key === "ArrowRight") step(-SWIPE_LEFT_STEP);
 });
+
+// Wischen im Player (auch im Vollbild, solange der Player selbst im Vollbild ist).
+let swipe = null;
+els.player.addEventListener("touchstart", (e) => {
+  swipe = null;
+  if (e.touches.length !== 1) return;
+  const t = e.touches[0];
+  const r = els.player.getBoundingClientRect();
+  // Leiste oben und unterer Rand (Videosteuerung, Zeitleiste) nicht als Wischfläche nutzen.
+  if (e.target.closest && e.target.closest(".bar")) return;
+  if (r.bottom - t.clientY < 90) return;
+  swipe = { x: t.clientX, y: t.clientY, t: Date.now() };
+}, { passive: true });
+els.player.addEventListener("touchend", (e) => {
+  if (!swipe) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+  const quick = Date.now() - swipe.t < 800;
+  swipe = null;
+  if (quick && Math.abs(dx) >= SWIPE_MIN_PX && Math.abs(dx) > 1.5 * Math.abs(dy)) {
+    step(dx < 0 ? SWIPE_LEFT_STEP : -SWIPE_LEFT_STEP);
+  }
+}, { passive: true });
+els.player.addEventListener("touchcancel", () => { swipe = null; });
 
 /* ---------- Code-Sperre ---------- */
 // Bequemlichkeits-Sperre vor dem Start der App. Kein Ersatz für die Microsoft-Anmeldung:
