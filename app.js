@@ -530,6 +530,28 @@ function revokeBlob() {
   if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (_) { /* nicht kritisch */ } blobUrl = null; }
 }
 
+// Lädt die Antwort stückweise und meldet den Fortschritt. Gibt null zurück, wenn inzwischen ein anderes Video läuft.
+async function readWithProgress(r, token, onProgress) {
+  const total = Number(r.headers.get("content-length")) || 0;
+  if (!r.body || !r.body.getReader) {
+    const b = await r.blob(); // Browser ohne Streaming: ohne Fortschritt
+    return new Blob([b], { type: "video/mp4" });
+  }
+  const reader = r.body.getReader();
+  const chunks = [];
+  let got = 0;
+  onProgress(0, total);
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (token !== playToken) { try { await reader.cancel(); } catch (_) { /* nicht kritisch */ } return null; }
+    chunks.push(value);
+    got += value.length;
+    onProgress(got, total);
+  }
+  return new Blob(chunks, { type: "video/mp4" });
+}
+
 function showVideoError() {
   const err = els.pvideo.error;
   const code = err && err.code ? err.code : 0;
@@ -569,17 +591,32 @@ els.pvideo.addEventListener("error", async () => {
     blobTried = true;
     els.pmsg.hidden = false;
     els.pmsg.className = "msg";
-    els.pmsg.textContent = "Direktwiedergabe nicht möglich, lade die Datei komplett …";
+    els.pmsg.replaceChildren();
+    const label = document.createElement("div");
+    label.textContent = "Direktwiedergabe nicht möglich, lade die Datei komplett …";
+    const bar = document.createElement("progress");
+    bar.max = 100;
+    bar.style.cssText = "width:100%;height:14px;margin-top:8px;accent-color:var(--accent)";
+    els.pmsg.append(label, bar);
     try {
       const r = await fetch(src);
       const len = r.headers.get("content-length");
       probeInfo = "Abruf: Status " + r.status + ", Content-Type " + (r.headers.get("content-type") || "unbekannt") +
         (len ? ", " + sizeText(Number(len)) : "");
       if (!r.ok) throw new Error("Status " + r.status);
-      const whole = await r.blob();
-      if (token !== playToken) return;
+      const whole = await readWithProgress(r, token, (got, total) => {
+        if (total) {
+          const pct = Math.min(100, Math.floor((got / total) * 100));
+          bar.value = pct;
+          label.textContent = "Lade Datei … " + pct + " % (" + sizeText(got) + " von " + sizeText(total) + ")";
+        } else {
+          bar.removeAttribute("value"); // unbekannte Gesamtgröße: laufender Balken
+          label.textContent = "Lade Datei … " + sizeText(got);
+        }
+      });
+      if (!whole || token !== playToken) return;
       revokeBlob();
-      blobUrl = URL.createObjectURL(whole.slice(0, whole.size, "video/mp4"));
+      blobUrl = URL.createObjectURL(whole);
       els.pvideo.src = blobUrl;
       els.pmsg.hidden = true;
       try { await els.pvideo.play(); } catch (_) { /* ggf. Tippen auf Play */ }
@@ -628,7 +665,7 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "Video: bei Ablehnung durch den Browser (Code 4) Rückfall über komplettes Laden als Video/mp4, Fehlerdetails mit Abruf-Status",
+  "Fortschrittsbalken (Prozent und MB), wenn das Video komplett geladen werden muss",
 ];
 
 /* ---------- Code-Sperre ---------- */
