@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
-<meta name="app-version" content="18">
+<meta name="app-version" content="19">
 <title>Video-Kacheln</title>
 <style>
   :root {
@@ -63,6 +63,7 @@
   .seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--text); font-weight: 600; }
   #pathbar { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; min-width: 0; }
   #crumb { color: var(--muted); font-size: .9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #ver { color: var(--muted); font-size: .72rem; text-align: center; margin: 22px 0 0; }
   #hint { color: var(--muted); font-size: .85rem; margin: 0 0 12px; }
   #status { margin: 28px 0; }
   #status p { margin: 0 0 12px; }
@@ -161,6 +162,7 @@
 <p id="hint" hidden>Tippen öffnet einen Ordner, spielt ein Video ab oder zeigt ein Bild. Im Player blättern die Pfeile unten.</p>
 <div id="status"></div>
 <div id="grid" role="listbox" aria-label="Inhalt"></div>
+<p id="ver"></p>
 
 <div id="player" hidden>
   <div class="bar">

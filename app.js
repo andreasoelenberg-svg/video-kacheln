@@ -852,8 +852,36 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "Kennzeichnung VIDEO / BILD oben links auf jeder Kachel",
+  "Selbstaktualisierung auch bei lange offenem Tab; Versionsnummer unten auf der Seite",
 ];
+
+/* ---------- Selbstaktualisierung ---------- */
+function goTo(url) {
+  window.location.replace(url);
+}
+
+// Prüft, ob es eine neuere Version gibt (z. B. wenn der Tab lange offen war) und lädt dann neu.
+async function checkUpdate() {
+  try {
+    if (!els.player.hidden) return; // nie mitten in einem Video
+    if (/[#&](code|state|error)=/.test(location.hash || "")) return; // Anmeldung läuft
+    const r = await fetch("./version.json?t=" + Date.now(), { cache: "no-store" });
+    const j = await r.json();
+    const latest = String(j.version);
+    if (!/^\d+$/.test(latest) || latest === String(APP_VERSION)) return;
+    let tried = null;
+    try { tried = sessionStorage.getItem("vk_reload"); } catch (_) { /* nicht kritisch */ }
+    if (tried === latest) return; // nur ein Versuch pro Version
+    try { sessionStorage.setItem("vk_reload", latest); } catch (_) { /* nicht kritisch */ }
+    goTo(location.pathname + "?v=" + latest + (location.hash || ""));
+  } catch (_) { /* offline o. Ä.: nichts tun */ }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkUpdate(); });
+window.addEventListener("pageshow", (e) => { if (e.persisted) checkUpdate(); });
+els.reload.addEventListener("click", checkUpdate);
+
+const verEl = $("ver");
+if (verEl) verEl.textContent = "Version " + APP_VERSION;
 
 /* ---------- Code-Sperre ---------- */
 // Bequemlichkeits-Sperre vor dem Start der App. Kein Ersatz für die Microsoft-Anmeldung:
