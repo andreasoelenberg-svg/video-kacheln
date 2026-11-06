@@ -32,6 +32,7 @@ let pca = null;
 let items = [];
 let currentPath = ROOT_PATH;
 let sortMode = "name";
+let sortDesc = false; // Start: Name aufsteigend
 let selectedId = null;
 let playToken = 0;
 let loadToken = 0;
@@ -238,16 +239,17 @@ function dateText(iso) {
 }
 
 function sorted() {
-  // Ordner stehen immer oben und sind nach Namen sortiert, danach die Videos.
-  const folders = items.filter((it) => it.folder).sort((a, b) => collator.compare(a.name, b.name));
+  // Ordner stehen immer oben (nach Namen; bei der Namenssortierung in der gewählten Richtung), danach die Dateien.
+  const dir = sortDesc ? -1 : 1;
+  const nameDir = sortMode === "name" ? dir : 1;
+  const folders = items.filter((it) => it.folder).sort((a, b) => nameDir * collator.compare(a.name, b.name));
   const videos = items.filter((it) => !it.folder); // Videos und Bilder
   if (sortMode === "date") {
-    videos.sort((a, b) => String(b.lastModifiedDateTime).localeCompare(String(a.lastModifiedDateTime)));
+    videos.sort((a, b) => dir * String(a.lastModifiedDateTime).localeCompare(String(b.lastModifiedDateTime)) || collator.compare(a.name, b.name));
   } else if (sortMode === "size") {
-    // Größte Datei zuerst; bei gleicher Größe nach Namen.
-    videos.sort((a, b) => (b.size || 0) - (a.size || 0) || collator.compare(a.name, b.name));
+    videos.sort((a, b) => dir * ((a.size || 0) - (b.size || 0)) || collator.compare(a.name, b.name));
   } else {
-    videos.sort((a, b) => collator.compare(a.name, b.name));
+    videos.sort((a, b) => dir * collator.compare(a.name, b.name));
   }
   return folders.concat(videos);
 }
@@ -386,12 +388,25 @@ els.grid.addEventListener("keydown", (e) => {
 els.sort.addEventListener("click", (e) => {
   const b = e.target.closest("button[data-sort]");
   if (!b) return;
-  sortMode = b.dataset.sort;
-  for (const x of els.sort.querySelectorAll("button")) {
-    x.setAttribute("aria-pressed", x === b ? "true" : "false");
+  if (sortMode === b.dataset.sort) {
+    sortDesc = !sortDesc; // erneut gedrückt: Richtung umkehren
+  } else {
+    sortMode = b.dataset.sort;
+    sortDesc = true; // erster Druck: absteigend
   }
+  updateSortButtons();
   render();
 });
+
+const SORT_LABELS = { name: "Name", date: "Datum", size: "Größe" };
+function updateSortButtons() {
+  for (const x of els.sort.querySelectorAll("button")) {
+    const on = x.dataset.sort === sortMode;
+    x.setAttribute("aria-pressed", on ? "true" : "false");
+    x.textContent = SORT_LABELS[x.dataset.sort] + (on ? (sortDesc ? " ▼" : " ▲") : "");
+  }
+}
+updateSortButtons();
 
 els.back.addEventListener("click", () => {
   if (currentPath !== ROOT_PATH) loadFolder(parentOf(currentPath), true);
@@ -552,14 +567,10 @@ function autoVlc() {
   els.pmsg.className = "msg";
   els.pmsg.replaceChildren();
   const l1 = document.createElement("div");
-  l1.textContent = "Der Browser kann dieses Video nicht abspielen. Es wird in VLC geöffnet …";
-  const l2 = document.createElement("div");
-  l2.style.cssText = "font-size:.8rem;opacity:.8;margin-top:6px";
-  l2.textContent = "Falls VLC nicht startet, auf „In VLC abspielen“ tippen.";
+  l1.textContent = "Nicht abspielbar im Browser – wird in VLC geöffnet.";
   els.pmsg.append(l1);
   const vb = vlcBox();
   if (vb) els.pmsg.append(vb);
-  els.pmsg.append(l2);
   vlcLaunch(vlcStreamUrl());
 }
 
@@ -722,35 +733,11 @@ async function readWithProgress(r, token, onProgress) {
 function showVideoError() {
   const err = els.pvideo.error;
   const code = err && err.code ? err.code : 0;
-  const can = (t) => els.pvideo.canPlayType(t) || "nein";
+  // Einzelheiten nur in der Konsole, auf dem Bildschirm steht ein einzelner Satz.
+  try { console.info("Videofehler:", code, err && err.message, probeInfo, fileInfo); } catch (_) { /* nicht kritisch */ }
   els.pmsg.hidden = false;
   els.pmsg.className = "msg err";
-  els.pmsg.replaceChildren();
-  const lines = [
-    "Das Video lässt sich in diesem Browser nicht abspielen.",
-    "Browser-Meldung: " + (code ? "Code " + code + " – " + (MEDIA_ERRORS[code] || "unbekannt") : "keine") +
-      (err && err.message ? " (" + err.message + ")" : ""),
-    "Dieser Browser kann laut eigener Angabe: H.264 " + can('video/mp4; codecs="avc1.640028"') +
-      ", H.265 " + can('video/mp4; codecs="hvc1.1.6.L93.B0"') + ", AV1 " + can('video/mp4; codecs="av01.0.05M.08"'),
-  ];
-  if (probeInfo) lines.push(probeInfo);
-  if (fileInfo) lines.push(...fileInfo.split("\n"));
-  for (const t of lines) {
-    const d = document.createElement("div");
-    d.textContent = t;
-    els.pmsg.append(d);
-  }
-  const vb = vlcBox();
-  if (vb) els.pmsg.append(vb);
-  if (lastDownloadUrl) {
-    const link = document.createElement("a");
-    link.href = lastDownloadUrl; // frische, kurzlebige Adresse; gilt nur ca. 1 Stunde
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = "Datei direkt öffnen (neuer Tab)";
-    link.style.color = "inherit";
-    els.pmsg.append(link);
-  }
+  els.pmsg.textContent = "Das Video lässt sich in diesem Browser nicht abspielen.";
 }
 
 els.pvideo.addEventListener("error", async () => {
@@ -858,7 +845,8 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "iPhone/iPad: Kann der Browser ein Video nicht abspielen, startet es automatisch in VLC",
+  "Sortierknöpfe: erster Druck absteigend, erneuter Druck aufsteigend (Pfeil zeigt die Richtung)",
+  "Videofehler nur noch als ein kurzer Satz",
 ];
 
 /* ---------- Code-Sperre ---------- */
