@@ -333,6 +333,13 @@ function render() {
     pb.textContent = isFolder ? "›" : isImg ? "⤢" : "▶";
 
     tile.append(cap, pb);
+    if (!isFolder) {
+      const badge = document.createElement("div");
+      badge.className = "badge " + (isImg ? "image" : "video");
+      badge.setAttribute("aria-hidden", "true");
+      badge.textContent = isImg ? "BILD" : "VIDEO";
+      tile.append(badge);
+    }
     frag.append(tile);
   }
   els.grid.replaceChildren(frag);
@@ -845,8 +852,7 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "Sortierknöpfe: erster Druck absteigend, erneuter Druck aufsteigend (Pfeil zeigt die Richtung)",
-  "Videofehler nur noch als ein kurzer Satz",
+  "Kennzeichnung VIDEO / BILD oben links auf jeder Kachel",
 ];
 
 /* ---------- Code-Sperre ---------- */
