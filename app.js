@@ -322,7 +322,7 @@ function render() {
       const n = item.folder.childCount;
       meta.textContent = typeof n === "number" ? n + (n === 1 ? " Element" : " Elemente") : "Ordner";
     } else {
-      meta.textContent = [sizeText(item.size), dateText(item.lastModifiedDateTime)].filter(Boolean).join(" · ");
+      meta.textContent = [isImg ? "BILD" : "VIDEO", sizeText(item.size), dateText(item.lastModifiedDateTime)].filter(Boolean).join(" · ");
     }
     cap.append(name, meta);
 
@@ -335,7 +335,7 @@ function render() {
     tile.append(cap, pb);
     if (!isFolder) {
       const badge = document.createElement("div");
-      badge.className = "badge " + (isImg ? "image" : "video");
+      badge.className = "kindtag " + (isImg ? "image" : "video");
       badge.setAttribute("aria-hidden", "true");
       badge.textContent = isImg ? "BILD" : "VIDEO";
       tile.append(badge);
@@ -852,7 +852,7 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "Selbstaktualisierung auch bei lange offenem Tab; Versionsnummer unten auf der Seite",
+  "VIDEO/BILD zusätzlich als Text in der Zeile unter dem Namen (Etikett oben links bleibt)",
 ];
 
 /* ---------- Selbstaktualisierung ---------- */
