@@ -1207,9 +1207,7 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "07.11.2026";
 const APP_CHANGES = [
-  "Nach der Microsoft-Anmeldung wird eine veraltete Startseite erkannt und die neue Version geladen (Fehler: Start zeigte 24, App war 23)",
-  "App-Name mit Versionsnummer: „Video-Kacheln V.x“ (Tab-Titel, Überschrift, Code-Sperre)",
-  "Neu in V.24: Knopf „Als Ordnerbild“ (grüner Rahmen, Reiter „ORDNER“); Pausenmodus mit Feinregler, ±1 s und Bild für Bild",
+  "Ordnername steht auf schwarzem Hintergrund (auf jedem Ordnerbild lesbar)",
 ];
 
 /* ---------- Selbstaktualisierung ---------- */
