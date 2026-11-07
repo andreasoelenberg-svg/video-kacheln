@@ -63,6 +63,9 @@ async function start() {
     await pca.initialize();
     const result = await pca.handleRedirectPromise();
     if (result && result.account) pca.setActiveAccount(result.account);
+    // Nach der Microsoft-Anmeldung landet man auf der Adresse ohne ?v=… und damit evtl. auf einer veralteten Startseite.
+    // Dann hier einmalig auf die neue Version wechseln (die Anmeldung bleibt im sessionStorage erhalten).
+    if (result && (await checkUpdate(true))) return;
   } catch (e) {
     showError("Anmeldung fehlgeschlagen: " + (e && e.message ? e.message : e), true);
     return;
@@ -1204,8 +1207,9 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "07.11.2026";
 const APP_CHANGES = [
-  "Ordnerbild: Knopf „Als Ordnerbild“ im Player legt ein Bild auf die Kachel des Ordners (grüner Rahmen und Reiter „ORDNER“)",
-  "Pausenmodus: Feinregler (±5 s), Sprung ±1 s und Bild für Bild (gedrückt halten wiederholt) zur genauen Wahl des Vorschaubilds",
+  "Nach der Microsoft-Anmeldung wird eine veraltete Startseite erkannt und die neue Version geladen (Fehler: Start zeigte 24, App war 23)",
+  "App-Name mit Versionsnummer: „Video-Kacheln V.x“ (Tab-Titel, Überschrift, Code-Sperre)",
+  "Neu in V.24: Knopf „Als Ordnerbild“ (grüner Rahmen, Reiter „ORDNER“); Pausenmodus mit Feinregler, ±1 s und Bild für Bild",
 ];
 
 /* ---------- Selbstaktualisierung ---------- */
@@ -1214,27 +1218,36 @@ function goTo(url) {
 }
 
 // Prüft, ob es eine neuere Version gibt (z. B. wenn der Tab lange offen war) und lädt dann neu.
-async function checkUpdate() {
+// afterLogin = true: direkt nach der Anmeldung (Adressteil ist verarbeitet), mit eigenem Einmal-Schutz.
+// Gibt true zurück, wenn zur neuen Version gewechselt wird.
+async function checkUpdate(afterLogin) {
   try {
-    if (!els.player.hidden) return; // nie mitten in einem Video
-    if (/[#&](code|state|error)=/.test(location.hash || "")) return; // Anmeldung läuft
+    if (!els.player.hidden) return false; // nie mitten in einem Video
+    if (!afterLogin && /[#&](code|state|error)=/.test(location.hash || "")) return false; // Anmeldung läuft
     const r = await fetch("./version.json?t=" + Date.now(), { cache: "no-store" });
     const j = await r.json();
     const latest = String(j.version);
-    if (!/^\d+$/.test(latest) || latest === String(APP_VERSION)) return;
+    if (!/^\d+$/.test(latest) || latest === String(APP_VERSION)) return false;
+    const key = afterLogin === true ? "vk_reload_login" : "vk_reload";
     let tried = null;
-    try { tried = sessionStorage.getItem("vk_reload"); } catch (_) { /* nicht kritisch */ }
-    if (tried === latest) return; // nur ein Versuch pro Version
-    try { sessionStorage.setItem("vk_reload", latest); } catch (_) { /* nicht kritisch */ }
-    goTo(location.pathname + "?v=" + latest + (location.hash || ""));
-  } catch (_) { /* offline o. Ä.: nichts tun */ }
+    try { tried = sessionStorage.getItem(key); } catch (_) { /* nicht kritisch */ }
+    if (tried === latest) return false; // nur ein Versuch pro Version
+    try { sessionStorage.setItem(key, latest); } catch (_) { /* nicht kritisch */ }
+    goTo(location.pathname + "?v=" + latest + (afterLogin === true ? "" : location.hash || ""));
+    return true;
+  } catch (_) { return false; /* offline o. Ä.: nichts tun */ }
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkUpdate(); });
 window.addEventListener("pageshow", (e) => { if (e.persisted) checkUpdate(); });
-els.reload.addEventListener("click", checkUpdate);
+els.reload.addEventListener("click", () => checkUpdate());
 
 const verEl = $("ver");
 if (verEl) verEl.textContent = "Version " + APP_VERSION;
+
+// App-Name immer mit Versionsnummer: „Video-Kacheln V.24“ (Tab-Titel, Überschrift, Code-Sperre).
+const APP_TITLE = "Video-Kacheln V." + APP_VERSION;
+document.title = APP_TITLE;
+for (const el of document.querySelectorAll("h1, #gate h2")) el.textContent = APP_TITLE;
 
 /* ---------- Code-Sperre ---------- */
 // Bequemlichkeits-Sperre vor dem Start der App. Kein Ersatz für die Microsoft-Anmeldung:
