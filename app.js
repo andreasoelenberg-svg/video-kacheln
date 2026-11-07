@@ -497,37 +497,74 @@ function flash(text, isError, ms) {
 }
 
 // Nimmt ein Standbild des Videos an der Stelle t (Sekunden). Eigenes verstecktes Video, damit die Wiedergabe unberührt bleibt.
+// Safari auf dem iPhone liefert für ein nicht angezeigtes, nicht abgespieltes Video oft ein schwarzes Bild. Darum hängt das
+// Video unsichtbar im Dokument, und ein rein schwarzes Ergebnis wird nie gespeichert: erst ein zweiter Versuch mit kurzem Abspielen,
+// danach eine klare Fehlermeldung.
 function captureFrame(src, t) {
   return new Promise((resolve, reject) => {
     const v = document.createElement("video");
     v.crossOrigin = "anonymous";
     v.muted = true;
+    v.setAttribute("muted", "");
     v.playsInline = true;
+    v.setAttribute("playsinline", "");
     v.preload = "auto";
+    v.style.cssText = "position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none;";
+    document.body.append(v);
     let finished = false;
     const done = (err, blob) => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
+      try { v.pause(); } catch (_) { /* nicht kritisch */ }
       v.removeAttribute("src");
       try { v.load(); } catch (_) { /* nicht kritisch */ }
+      v.remove();
       if (err) reject(err); else resolve(blob);
     };
     const timer = setTimeout(() => done(new Error("Zeitüberschreitung beim Laden des Videos")), 25000);
+    // Zeichnet das aktuelle Bild; liefert { canvas, black }.
+    const grab = () => {
+      if (!v.videoWidth) throw new Error("Videogröße unbekannt");
+      const w = 480, h = Math.round((w * v.videoHeight) / v.videoWidth);
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d");
+      ctx.drawImage(v, 0, 0, w, h);
+      const px = ctx.getImageData(0, 0, w, h).data;
+      let black = true;
+      for (let i = 0; i < px.length; i += 16) { // jedes 4. Pixel genügt
+        if (px[i] > 12 || px[i + 1] > 12 || px[i + 2] > 12) { black = false; break; }
+      }
+      return { canvas: c, black };
+    };
+    const finish = (g) => g.canvas.toBlob((b) => (b ? done(null, b) : done(new Error("Bild konnte nicht erzeugt werden"))), "image/jpeg", 0.82);
     v.addEventListener("error", () => done(new Error("Video konnte für das Standbild nicht geladen werden")));
     v.addEventListener("loadedmetadata", () => { try { v.currentTime = t; } catch (e) { done(e); } });
     v.addEventListener("seeked", () => {
       setTimeout(() => {
         try {
-          if (!v.videoWidth) throw new Error("Videogröße unbekannt");
-          const w = 480, h = Math.round((w * v.videoHeight) / v.videoWidth);
-          const c = document.createElement("canvas");
-          c.width = w;
-          c.height = h;
-          c.getContext("2d").drawImage(v, 0, 0, w, h);
-          c.toBlob((b) => (b ? done(null, b) : done(new Error("Bild konnte nicht erzeugt werden"))), "image/jpeg", 0.82);
+          const first = grab();
+          if (!first.black) { finish(first); return; }
+          // Zweiter Versuch: kurz abspielen, damit der Browser ein Bild entschlüsselt.
+          const p = v.play();
+          if (p && p.catch) p.catch(() => {});
+          let tried = false;
+          const second = () => {
+            if (tried || finished) return;
+            tried = true;
+            try {
+              v.pause();
+              const g = grab();
+              if (g.black) done(new Error("Das Standbild ist komplett schwarz. Dieses Video lässt sich in diesem Browser nicht auslesen."));
+              else finish(g);
+            } catch (e) { done(e); }
+          };
+          if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => setTimeout(second, 100));
+          setTimeout(second, 1500);
         } catch (e) { done(e); }
-      }, 150);
+      }, 200);
     }, { once: true });
     v.src = src;
   });
@@ -979,7 +1016,8 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "07.11.2026";
 const APP_CHANGES = [
-  "Vorschaubilder liegen direkt im App-Ordner (ohne Unterordner „thumbs“); der Ordner „Thumbnails“ wird nicht als Kachel gezeigt",
+  "Vorschaubild: schwarze Standbilder werden nicht mehr gespeichert (zweiter Versuch, sonst klare Meldung)",
+  "Vorschaubilder liegen direkt im App-Ordner (ohne Unterordner „thumbs“); Ordner „Thumbnails“ wird nicht als Kachel gezeigt",
 ];
 
 /* ---------- Selbstaktualisierung ---------- */
