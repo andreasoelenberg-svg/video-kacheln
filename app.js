@@ -24,7 +24,8 @@ const els = {
   grid: $("grid"), status: $("status"), count: $("count"), hint: $("hint"),
   sort: $("sort"), reload: $("reload"), logout: $("logout"),
   pathbar: $("pathbar"), back: $("back"), crumb: $("crumb"),
-  player: $("player"), pvideo: $("pvideo"), pimg: $("pimg"), ptitle: $("ptitle"), pmsg: $("pmsg"), pclose: $("pclose"), pprev: $("pprev"), pnext: $("pnext"), pthumb: $("pthumb"),
+  player: $("player"), pvideo: $("pvideo"), pimg: $("pimg"), ptitle: $("ptitle"), pmsg: $("pmsg"), pclose: $("pclose"), pprev: $("pprev"), pnext: $("pnext"), pthumb: $("pthumb"), pfolder: $("pfolder"),
+  pfine: $("pfine"), ptime: $("ptime"), pslider: $("pslider"), pm1s: $("pm1s"), pmf: $("pmf"), ppf: $("ppf"), pp1s: $("pp1s"),
 };
 
 /* ---------- Zustand ---------- */
@@ -301,7 +302,7 @@ async function loadCustomThumbs() {
 }
 
 function thumbUrl(item) {
-  if (!item.folder && !isImage(item) && customThumbs[thumbName(item)]) return customThumbs[thumbName(item)];
+  if (!isImage(item) && customThumbs[thumbName(item)]) return customThumbs[thumbName(item)];
   const t = item.thumbnails && item.thumbnails[0];
   if (!t) return null;
   // Größte Vorschau zuerst (large = bis ca. 800 px), kleinere nur als Rückfall.
@@ -344,7 +345,8 @@ function render() {
     }
     tile.append(ph);
 
-    if (!isFolder) {
+    let hasCover = false;
+    {
       const url = thumbUrl(item);
       if (url) {
         const img = document.createElement("img");
@@ -355,6 +357,7 @@ function render() {
         img.src = url;
         img.addEventListener("error", () => img.remove());
         tile.append(img);
+        hasCover = true;
       }
     }
 
@@ -380,6 +383,16 @@ function render() {
     pb.textContent = isFolder ? "›" : isImg ? "⤢" : "▶";
 
     tile.append(cap, pb);
+    if (isFolder && hasCover) {
+      // Ordner mit eigenem Bild: grüner Rahmen und Reiter mit Ordner-Symbol, damit er nicht mit einem Video verwechselt wird.
+      tile.classList.add("hascover");
+      const ft = document.createElement("div");
+      ft.className = "foldertag";
+      ft.setAttribute("aria-hidden", "true");
+      ft.innerHTML = FOLDER_SVG; // feste, eigene Grafik
+      ft.append("ORDNER");
+      tile.append(ft);
+    }
     if (!isFolder) {
       const badge = document.createElement("div");
       badge.className = "kindtag " + (isImg ? "image" : "video");
@@ -571,40 +584,210 @@ function captureFrame(src, t) {
 }
 
 let savingThumb = false;
-async function saveThumbnail() {
+
+// Legt das Bild (JPEG) im App-Ordner ab; key = OneDrive-ID der Datei bzw. des Ordners, zu dem das Bild gehört.
+async function putThumbBlob(key, blob, token) {
+  const name = thumbName({ id: key });
+  const res = await fetch(GRAPH + "/me/drive/special/approot:/" + name + ":/content", {
+    method: "PUT",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "image/jpeg" },
+    body: blob,
+  });
+  if (!res.ok) throw new Error("OneDrive antwortet mit Status " + res.status);
+  const old = customThumbs[name];
+  if (old && old.startsWith("blob:")) URL.revokeObjectURL(old);
+  customThumbs[name] = URL.createObjectURL(blob);
+}
+
+// Verkleinert ein Bild aus OneDrive auf ein JPEG (480 px breit).
+async function imageToJpeg(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("Bild nicht ladbar (Status " + r.status + ")");
+  const objUrl = URL.createObjectURL(await r.blob());
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error("Bild nicht lesbar"));
+      i.src = objUrl;
+    });
+    const w = 480, h = Math.max(1, Math.round((w * img.naturalHeight) / img.naturalWidth));
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    c.getContext("2d").drawImage(img, 0, 0, w, h);
+    return await new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("Bild konnte nicht erzeugt werden"))), "image/jpeg", 0.82));
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
+}
+
+// kind "video": Standbild als Kachelbild des Videos. kind "folder": Standbild bzw. Bild als Kachelbild des aktuellen Ordners.
+async function saveThumbnail(kind) {
   const item = viewList[viewIndex];
-  if (savingThumb || !item || isImage(item)) return;
+  if (savingThumb || !item) return;
+  if (kind === "video" && isImage(item)) return;
+  if (kind === "folder" && currentPath === ROOT_PATH) { flash("Der Startordner hat keine Kachel.", true, 5000); return; }
   savingThumb = true;
   els.pthumb.disabled = true;
+  els.pfolder.disabled = true;
+  const what = kind === "folder" ? "Ordnerbild" : "Vorschaubild";
   try {
-    const t = els.pvideo.currentTime || 0;
+    const img = isImage(item);
+    const t = img ? 0 : els.pvideo.currentTime || 0;
     const token = await appFolderToken(true);
     if (!token) { flash("Weiterleitung zur Berechtigung …", false, 8000); return; }
-    flash("Speichere Vorschaubild …", false, 30000);
-    const data = await graph("/me/drive/items/" + encodeURIComponent(item.id));
+    flash("Speichere " + what + " …", false, 30000);
+    const enc = currentPath.split("/").map(encodeURIComponent).join("/");
+    const [data, folder] = await Promise.all([
+      graph("/me/drive/items/" + encodeURIComponent(item.id)),
+      kind === "folder" ? graph("/me/drive/root:/" + enc + "?$select=id") : Promise.resolve(null),
+    ]);
     const url = data && data["@microsoft.graph.downloadUrl"];
     if (!url) throw new Error("keine Download-Adresse");
-    const blob = await captureFrame(url, t);
-    const res = await fetch(GRAPH + "/me/drive/special/approot:/" + thumbName(item) + ":/content", {
-      method: "PUT",
-      headers: { Authorization: "Bearer " + token, "Content-Type": "image/jpeg" },
-      body: blob,
-    });
-    if (!res.ok) throw new Error("OneDrive antwortet mit Status " + res.status);
-    customThumbs[thumbName(item)] = URL.createObjectURL(blob);
+    const key = kind === "folder" ? folder && folder.id : item.id;
+    if (!key) throw new Error("Ordner nicht gefunden");
+    const blob = img ? await imageToJpeg(url) : await captureFrame(url, t);
+    await putThumbBlob(key, blob, token);
     render();
-    flash("Vorschaubild gespeichert.");
+    flash(what + " gespeichert.");
   } catch (e) {
-    flash("Vorschaubild nicht möglich: " + ((e && e.message) || e), true, 8000);
+    flash(what + " nicht möglich: " + ((e && e.message) || e), true, 8000);
   } finally {
     savingThumb = false;
     els.pthumb.disabled = false;
+    els.pfolder.disabled = false;
   }
 }
+
+/* ---------- Feinwahl im Pausenmodus ---------- */
+// Zeigt bei angehaltenem Video einen Feinregler (±5 s um die Pausenstelle), Sprünge um 1 s und Bild-für-Bild-Knöpfe.
+let videoFps = 30;
+let fpsKnown = false;
+let anchor = 0; // Mitte des Feinreglers (Sekunden)
+let sliding = false;
+let slideTarget = 0;
+const FPS_STEPS = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 120];
+
+function snapFps(f) {
+  for (const s of FPS_STEPS) if (Math.abs(f - s) / s < 0.02) return s;
+  return Math.round(f * 10) / 10;
+}
+
+// Schätzt die Bildrate aus der Wiedergabe (requestVideoFrameCallback). Ohne Messung gelten 30 Bilder/s.
+function startFpsProbe(token) {
+  const v = els.pvideo;
+  videoFps = 30;
+  fpsKnown = false;
+  if (!v.requestVideoFrameCallback) return;
+  let last = null;
+  const samples = [];
+  const cb = (now, md) => {
+    if (token !== playToken) return;
+    if (last && md.presentedFrames - last.pf === 1) {
+      const d = md.mediaTime - last.mt;
+      if (d > 0.004 && d < 0.2) samples.push(d);
+    }
+    last = { pf: md.presentedFrames, mt: md.mediaTime };
+    if (samples.length >= 15) {
+      samples.sort((x, y) => x - y);
+      const f = 1 / samples[samples.length >> 1];
+      if (f >= 10 && f <= 125) { videoFps = snapFps(f); fpsKnown = true; updateFine(); }
+      return;
+    }
+    v.requestVideoFrameCallback(cb);
+  };
+  v.requestVideoFrameCallback(cb);
+}
+
+function fmtTime(t) {
+  if (!isFinite(t) || t < 0) t = 0;
+  const m = Math.floor(t / 60);
+  const s = (t - m * 60).toFixed(2).replace(".", ",");
+  return m + ":" + (s.length < 5 ? "0" : "") + s;
+}
+
+function fineVisible() {
+  const v = els.pvideo;
+  return !els.player.hidden && !v.hidden && v.paused && v.readyState >= 1 && isFinite(v.duration) && v.duration > 0;
+}
+
+function updateFine() {
+  const show = fineVisible();
+  els.pfine.hidden = !show;
+  if (!show) return;
+  const v = els.pvideo;
+  const cur = sliding ? slideTarget : v.currentTime;
+  els.ptime.textContent = fmtTime(cur) + " / " + fmtTime(v.duration) + " · " +
+    (fpsKnown ? videoFps + " Bilder/s" : "Bildrate unbekannt, 30 angenommen");
+}
+
+function seekTo(t) {
+  const v = els.pvideo;
+  const max = Math.max(0, v.duration - 0.5 / videoFps);
+  v.currentTime = Math.min(Math.max(0, t), max);
+}
+
+// Ein Bild weiter/zurück: auf die Mitte des Nachbarbildes springen, damit Rundungen nicht auf dem alten Bild landen.
+function stepFrame(dir) {
+  const v = els.pvideo;
+  if (!fineVisible()) return;
+  seekTo((Math.floor(v.currentTime * videoFps + 1e-3) + dir + 0.5) / videoFps);
+  updateFine();
+}
+
+function stepSeconds(dir) {
+  if (!fineVisible()) return;
+  seekTo(els.pvideo.currentTime + dir);
+  updateFine();
+}
+
+// Knopf: sofort ein Schritt, bei gedrückt halten schnelle Wiederholung.
+function holdButton(btn, fn) {
+  let t1 = null, t2 = null;
+  const stop = () => { clearTimeout(t1); clearInterval(t2); t1 = t2 = null; };
+  btn.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.preventDefault();
+    fn();
+    stop();
+    t1 = setTimeout(() => { t2 = setInterval(fn, 90); }, 450);
+  });
+  for (const ev of ["pointerup", "pointercancel", "pointerleave", "lostpointercapture"]) btn.addEventListener(ev, stop);
+  btn.addEventListener("click", (e) => { if (e.detail === 0) fn(); }); // Tastatur
+}
+
+els.pslider.addEventListener("input", () => {
+  if (!fineVisible()) return;
+  sliding = true;
+  slideTarget = anchor + parseFloat(els.pslider.value);
+  seekTo(slideTarget);
+  updateFine();
+});
+els.pslider.addEventListener("change", () => {
+  sliding = false;
+  anchor = Math.min(Math.max(0, slideTarget), els.pvideo.duration || 0);
+  els.pslider.value = "0";
+  updateFine();
+});
+holdButton(els.pm1s, () => stepSeconds(-1));
+holdButton(els.pp1s, () => stepSeconds(1));
+holdButton(els.pmf, () => stepFrame(-1));
+holdButton(els.ppf, () => stepFrame(1));
+
+els.pvideo.addEventListener("pause", () => { anchor = els.pvideo.currentTime; els.pslider.value = "0"; updateFine(); });
+els.pvideo.addEventListener("play", updateFine);
+els.pvideo.addEventListener("loadedmetadata", updateFine);
+els.pvideo.addEventListener("emptied", updateFine);
+els.pvideo.addEventListener("seeked", () => {
+  if (!sliding) { anchor = els.pvideo.currentTime; els.pslider.value = "0"; }
+  updateFine();
+});
 
 function updateNav() {
   const cur = viewList[viewIndex];
   els.pthumb.hidden = !cur || isImage(cur);
+  els.pfolder.hidden = !cur;
   els.pprev.disabled = viewIndex <= 0;
   els.pnext.disabled = viewIndex < 0 || viewIndex >= viewList.length - 1;
 }
@@ -691,6 +874,7 @@ async function play(id) {
     }
     lastDownloadUrl = url;
     els.pvideo.src = url;
+    startFpsProbe(token);
     els.pmsg.hidden = true;
     try { await els.pvideo.play(); } catch (_) { /* Browser verlangt ggf. Tippen auf Play */ }
   } catch (e) {
@@ -997,17 +1181,21 @@ function closePlayer() {
   els.pvideo.removeAttribute("src");
   els.pvideo.load();
   els.player.hidden = true;
+  els.pfine.hidden = true;
 }
 
 els.pclose.addEventListener("click", closePlayer);
 els.pprev.addEventListener("click", () => step(-1));
-els.pthumb.addEventListener("click", saveThumbnail);
+els.pthumb.addEventListener("click", () => saveThumbnail("video"));
+els.pfolder.addEventListener("click", () => saveThumbnail("folder"));
 els.pnext.addEventListener("click", () => step(1));
 document.addEventListener("keydown", (e) => {
   if (els.player.hidden) return;
   if (e.key === "Escape") closePlayer();
   else if (e.key === "ArrowLeft") step(-1);
   else if (e.key === "ArrowRight") step(1);
+  else if (e.key === "," && fineVisible()) stepFrame(-1);
+  else if (e.key === "." && fineVisible()) stepFrame(1);
 });
 
 
@@ -1016,8 +1204,8 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "07.11.2026";
 const APP_CHANGES = [
-  "Vorschaubild: schwarze Standbilder werden nicht mehr gespeichert (zweiter Versuch, sonst klare Meldung)",
-  "Vorschaubilder liegen direkt im App-Ordner (ohne Unterordner „thumbs“); Ordner „Thumbnails“ wird nicht als Kachel gezeigt",
+  "Ordnerbild: Knopf „Als Ordnerbild“ im Player legt ein Bild auf die Kachel des Ordners (grüner Rahmen und Reiter „ORDNER“)",
+  "Pausenmodus: Feinregler (±5 s), Sprung ±1 s und Bild für Bild (gedrückt halten wiederholt) zur genauen Wahl des Vorschaubilds",
 ];
 
 /* ---------- Selbstaktualisierung ---------- */

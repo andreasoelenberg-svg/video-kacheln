@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
-<meta name="app-version" content="23">
+<meta name="app-version" content="24">
 <title>Video-Kacheln</title>
 <style>
   :root {
@@ -19,6 +19,8 @@
     --danger: #ff8a80;
     --img: #6bb5ff;
     --img-ink: #06182b;
+    --folder: #3fae6a;
+    --folder-ink: #06210f;
     color-scheme: dark;
   }
   @media (prefers-color-scheme: light) {
@@ -33,6 +35,8 @@
       --danger: #b3261e;
       --img: #1a64c0;
       --img-ink: #ffffff;
+      --folder: #1f7a45;
+      --folder-ink: #ffffff;
       color-scheme: light;
     }
   }
@@ -100,6 +104,13 @@
   }
   .tile .kindtag.video { background: var(--accent); color: var(--accent-ink); }
   .tile .kindtag.image { background: var(--img); color: var(--img-ink); }
+  .tile.folder.hascover { border: 3px solid var(--folder); }
+  .tile .foldertag {
+    position: absolute; top: 0; left: 0; display: flex; align-items: center; gap: 5px; padding: 4px 11px 5px 8px;
+    border-radius: 0 0 12px 0; background: var(--folder); color: var(--folder-ink); pointer-events: none;
+    font-size: .68rem; font-weight: 700; letter-spacing: .06em; line-height: 1.3;
+  }
+  .tile .foldertag svg { width: 15px; height: 15px; stroke-width: 4; }
   #player { position: fixed; inset: 0; background: #000; z-index: 20; display: flex; flex-direction: column; }
   #player .bar {
     display: flex; align-items: center; gap: 12px; color: #fff;
@@ -116,7 +127,19 @@
     flex: 1 1 0; min-height: 56px; font-size: 1.8rem; line-height: 1;
     background: rgba(255,255,255,.14); color: #fff; border-color: transparent;
   }
-  #player .nav #pthumb { flex: 2 1 0; font-size: 1rem; font-weight: 600; }
+  #player .nav #pthumb, #player .nav #pfolder { flex: 2 1 0; font-size: .85rem; font-weight: 600; line-height: 1.2; }
+  #player .fine { padding: 4px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); color: #fff; }
+  #player .fine .time { font-size: .85rem; text-align: center; font-variant-numeric: tabular-nums; opacity: .9; }
+  #player .fine input[type="range"] { width: 100%; height: 40px; margin: 0; accent-color: var(--accent); touch-action: none; }
+  #player .fine .btns { display: flex; gap: 8px; }
+  #player .fine .btns button {
+    flex: 1 1 0; min-height: 48px; font-size: .95rem; font-weight: 600;
+    background: rgba(255,255,255,.14); color: #fff; border-color: transparent; touch-action: manipulation;
+  }
+  @media (max-height: 480px) {
+    #player .fine .btns button { min-height: 38px; }
+    #player .nav button { min-height: 44px; }
+  }
   #player .nav button:disabled { opacity: .3; cursor: default; }
   #player .pbar { height: 12px; margin-top: 8px; border-radius: 6px; background: rgba(255,255,255,.2); overflow: hidden; }
   #player .pbar > div { height: 100%; width: 0; background: var(--accent); }
@@ -173,9 +196,20 @@
   <video id="pvideo" controls playsinline></video>
   <img id="pimg" alt="" hidden>
   <div class="msg" id="pmsg" hidden></div>
+  <div class="fine" id="pfine" hidden>
+    <div class="time" id="ptime"></div>
+    <input id="pslider" type="range" min="-5" max="5" step="0.01" value="0" aria-label="Feinsuche: 5 Sekunden zurück bis 5 Sekunden vor">
+    <div class="btns">
+      <button class="btn" id="pm1s" type="button" aria-label="1 Sekunde zurück">&minus;1 s</button>
+      <button class="btn" id="pmf" type="button" aria-label="1 Bild zurück">&#9666; Bild</button>
+      <button class="btn" id="ppf" type="button" aria-label="1 Bild vor">Bild &#9656;</button>
+      <button class="btn" id="pp1s" type="button" aria-label="1 Sekunde vor">+1 s</button>
+    </div>
+  </div>
   <div class="nav">
     <button class="btn" id="pprev" type="button" aria-label="Vorheriges">&#8249;</button>
     <button class="btn" id="pthumb" type="button" hidden>Als Vorschaubild</button>
+    <button class="btn" id="pfolder" type="button" hidden>Als Ordnerbild</button>
     <button class="btn" id="pnext" type="button" aria-label="Nächstes">&#8250;</button>
   </div>
 </div>
