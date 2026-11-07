@@ -84,7 +84,7 @@ async function start() {
 
 async function login() {
   try {
-    await pca.loginRedirect({ scopes: SCOPES, prompt: "select_account" });
+    await pca.loginRedirect({ scopes: SCOPES.concat([APP_SCOPE]), prompt: "select_account" });
   } catch (e) {
     // Fehler sichtbar machen, statt sie still zu verschlucken.
     const code = e && e.errorCode ? e.errorCode + ": " : "";
@@ -282,16 +282,39 @@ async function appFolderToken(interactive) {
   }
 }
 
+// Zeigt in der Fußzeile, wie es mit den eigenen Vorschaubildern steht (und bei Bedarf einen Knopf zum Berechtigen).
+function setThumbStatus(text, actionLabel, actionFn) {
+  const el = $("ver");
+  if (!el) return;
+  el.textContent = "Version " + APP_VERSION + " · " + text;
+  if (actionLabel) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn";
+    b.textContent = actionLabel;
+    b.addEventListener("click", actionFn);
+    el.append(" ", b);
+  }
+}
+
 async function loadCustomThumbs() {
   try {
     const token = await appFolderToken(false);
-    if (!token) return; // Berechtigung noch nicht erteilt: dann gibt es auch keine eigenen Bilder
+    if (!token) {
+      setThumbStatus("Vorschaubilder: Berechtigung fehlt", "Berechtigen", () => appFolderToken(true));
+      return;
+    }
     const map = {};
     let next = GRAPH + "/me/drive/special/approot/children?$select=name,@microsoft.graph.downloadUrl&$top=1000";
     while (next) {
       const res = await fetch(next, { headers: { Authorization: "Bearer " + token } });
-      if (res.status === 404) break; // noch kein Bild gespeichert
-      if (!res.ok) return;
+      if (res.status === 404) { setThumbStatus("Vorschaubilder: App-Ordner noch leer"); return; }
+      if (!res.ok) {
+        let code = "";
+        try { const j = await res.json(); code = (j && j.error && j.error.code) || ""; } catch (_) { /* nicht kritisch */ }
+        setThumbStatus("Vorschaubilder: OneDrive-Fehler " + res.status + (code ? " (" + code + ")" : ""));
+        return;
+      }
       const page = await res.json();
       for (const f of page.value || []) {
         const u = f["@microsoft.graph.downloadUrl"];
@@ -300,8 +323,11 @@ async function loadCustomThumbs() {
       next = page["@odata.nextLink"] || null;
     }
     Object.assign(customThumbs, map);
+    setThumbStatus("Vorschaubilder: " + Object.keys(map).length + " geladen");
     if (items.length) render();
-  } catch (_) { /* Vorschaubilder sind optional */ }
+  } catch (e) {
+    setThumbStatus("Vorschaubilder: Fehler (" + ((e && (e.errorCode || e.message)) || e) + ")");
+  }
 }
 
 function thumbUrl(item) {
@@ -1207,7 +1233,7 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "07.11.2026";
 const APP_CHANGES = [
-  "Ordnername steht auf schwarzem Hintergrund (auf jedem Ordnerbild lesbar)",
+  "Fußzeile zeigt, wie viele Vorschaubilder geladen wurden (oder den Fehlergrund); Anmeldung fragt die Berechtigung dafür gleich mit",
 ];
 
 /* ---------- Selbstaktualisierung ---------- */
@@ -1240,7 +1266,7 @@ window.addEventListener("pageshow", (e) => { if (e.persisted) checkUpdate(); });
 els.reload.addEventListener("click", () => checkUpdate());
 
 const verEl = $("ver");
-if (verEl) verEl.textContent = "Version " + APP_VERSION;
+if (verEl && !verEl.textContent) verEl.textContent = "Version " + APP_VERSION;
 
 // App-Name immer mit Versionsnummer: „Video-Kacheln V.24“ (Tab-Titel, Überschrift, Code-Sperre).
 const APP_TITLE = "Video-Kacheln V." + APP_VERSION;
