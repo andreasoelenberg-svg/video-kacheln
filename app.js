@@ -24,7 +24,7 @@ const els = {
   grid: $("grid"), status: $("status"), count: $("count"), hint: $("hint"),
   sort: $("sort"), reload: $("reload"), logout: $("logout"),
   pathbar: $("pathbar"), back: $("back"), crumb: $("crumb"),
-  player: $("player"), pvideo: $("pvideo"), pimg: $("pimg"), ptitle: $("ptitle"), pmsg: $("pmsg"), pclose: $("pclose"), pprev: $("pprev"), pnext: $("pnext"),
+  player: $("player"), pvideo: $("pvideo"), pimg: $("pimg"), ptitle: $("ptitle"), pmsg: $("pmsg"), pclose: $("pclose"), pprev: $("pprev"), pnext: $("pnext"), pthumb: $("pthumb"),
 };
 
 /* ---------- Zustand ---------- */
@@ -75,6 +75,7 @@ async function start() {
   pca.setActiveAccount(account);
   try { history.replaceState({ path: ROOT_PATH }, ""); } catch (_) { /* nicht kritisch */ }
   await loadFolder(ROOT_PATH, false);
+  loadCustomThumbs(); // im Hintergrund
 }
 
 async function login() {
@@ -254,7 +255,52 @@ function sorted() {
   return folders.concat(videos);
 }
 
+/* ---------- Eigene Vorschaubilder (App-Ordner in OneDrive) ---------- */
+// Liegen als JPEG in OneDrive unter Apps/<App-Name>/thumbs/. Dafür genügt die eng begrenzte Berechtigung
+// Files.ReadWrite.AppFolder: Die App darf nur in ihrem eigenen Ordner schreiben, sonst nirgends.
+const APP_SCOPE = "Files.ReadWrite.AppFolder";
+const THUMB_DIR = "thumbs";
+let customThumbs = {}; // Dateiname -> Adresse des Bildes
+
+const thumbName = (item) => String(item.id).replace(/[^A-Za-z0-9_-]/g, "_") + ".jpg";
+
+// interactive = false: nie weiterleiten (still prüfen). true: bei fehlender Berechtigung zur Microsoft-Seite weiterleiten.
+async function appFolderToken(interactive) {
+  const account = pca.getActiveAccount();
+  try {
+    const r = await pca.acquireTokenSilent({ scopes: [APP_SCOPE], account });
+    return r.accessToken;
+  } catch (e) {
+    if (!interactive) return null;
+    await pca.acquireTokenRedirect({ scopes: [APP_SCOPE], account });
+    return null; // Seite wird weitergeleitet
+  }
+}
+
+async function loadCustomThumbs() {
+  try {
+    const token = await appFolderToken(false);
+    if (!token) return; // Berechtigung noch nicht erteilt: dann gibt es auch keine eigenen Bilder
+    const map = {};
+    let next = GRAPH + "/me/drive/special/approot:/" + THUMB_DIR + ":/children?$select=name,@microsoft.graph.downloadUrl&$top=1000";
+    while (next) {
+      const res = await fetch(next, { headers: { Authorization: "Bearer " + token } });
+      if (res.status === 404) break; // noch kein Bild gespeichert
+      if (!res.ok) return;
+      const page = await res.json();
+      for (const f of page.value || []) {
+        const u = f["@microsoft.graph.downloadUrl"];
+        if (u && f.name) map[f.name] = u;
+      }
+      next = page["@odata.nextLink"] || null;
+    }
+    Object.assign(customThumbs, map);
+    if (items.length) render();
+  } catch (_) { /* Vorschaubilder sind optional */ }
+}
+
 function thumbUrl(item) {
+  if (!item.folder && !isImage(item) && customThumbs[thumbName(item)]) return customThumbs[thumbName(item)];
   const t = item.thumbnails && item.thumbnails[0];
   if (!t) return null;
   // Größte Vorschau zuerst (large = bis ca. 800 px), kleinere nur als Rückfall.
@@ -441,7 +487,86 @@ let viewList = [];
 let viewIndex = -1;
 
 // Blättern per Pfeil-Knöpfen unten im Player (und Pfeiltasten am PC).
+function flash(text, isError, ms) {
+  els.pmsg.hidden = false;
+  els.pmsg.className = isError ? "msg err" : "msg";
+  els.pmsg.textContent = text;
+  const mine = text;
+  setTimeout(() => { if (els.pmsg.textContent === mine) els.pmsg.hidden = true; }, ms || 3000);
+}
+
+// Nimmt ein Standbild des Videos an der Stelle t (Sekunden). Eigenes verstecktes Video, damit die Wiedergabe unberührt bleibt.
+function captureFrame(src, t) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement("video");
+    v.crossOrigin = "anonymous";
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = "auto";
+    let finished = false;
+    const done = (err, blob) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      v.removeAttribute("src");
+      try { v.load(); } catch (_) { /* nicht kritisch */ }
+      if (err) reject(err); else resolve(blob);
+    };
+    const timer = setTimeout(() => done(new Error("Zeitüberschreitung beim Laden des Videos")), 25000);
+    v.addEventListener("error", () => done(new Error("Video konnte für das Standbild nicht geladen werden")));
+    v.addEventListener("loadedmetadata", () => { try { v.currentTime = t; } catch (e) { done(e); } });
+    v.addEventListener("seeked", () => {
+      setTimeout(() => {
+        try {
+          if (!v.videoWidth) throw new Error("Videogröße unbekannt");
+          const w = 480, h = Math.round((w * v.videoHeight) / v.videoWidth);
+          const c = document.createElement("canvas");
+          c.width = w;
+          c.height = h;
+          c.getContext("2d").drawImage(v, 0, 0, w, h);
+          c.toBlob((b) => (b ? done(null, b) : done(new Error("Bild konnte nicht erzeugt werden"))), "image/jpeg", 0.82);
+        } catch (e) { done(e); }
+      }, 150);
+    }, { once: true });
+    v.src = src;
+  });
+}
+
+let savingThumb = false;
+async function saveThumbnail() {
+  const item = viewList[viewIndex];
+  if (savingThumb || !item || isImage(item)) return;
+  savingThumb = true;
+  els.pthumb.disabled = true;
+  try {
+    const t = els.pvideo.currentTime || 0;
+    const token = await appFolderToken(true);
+    if (!token) { flash("Weiterleitung zur Berechtigung …", false, 8000); return; }
+    flash("Speichere Vorschaubild …", false, 30000);
+    const data = await graph("/me/drive/items/" + encodeURIComponent(item.id));
+    const url = data && data["@microsoft.graph.downloadUrl"];
+    if (!url) throw new Error("keine Download-Adresse");
+    const blob = await captureFrame(url, t);
+    const res = await fetch(GRAPH + "/me/drive/special/approot:/" + THUMB_DIR + "/" + thumbName(item) + ":/content", {
+      method: "PUT",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "image/jpeg" },
+      body: blob,
+    });
+    if (!res.ok) throw new Error("OneDrive antwortet mit Status " + res.status);
+    customThumbs[thumbName(item)] = URL.createObjectURL(blob);
+    render();
+    flash("Vorschaubild gespeichert.");
+  } catch (e) {
+    flash("Vorschaubild nicht möglich: " + ((e && e.message) || e), true, 8000);
+  } finally {
+    savingThumb = false;
+    els.pthumb.disabled = false;
+  }
+}
+
 function updateNav() {
+  const cur = viewList[viewIndex];
+  els.pthumb.hidden = !cur || isImage(cur);
   els.pprev.disabled = viewIndex <= 0;
   els.pnext.disabled = viewIndex < 0 || viewIndex >= viewList.length - 1;
 }
@@ -838,6 +963,7 @@ function closePlayer() {
 
 els.pclose.addEventListener("click", closePlayer);
 els.pprev.addEventListener("click", () => step(-1));
+els.pthumb.addEventListener("click", saveThumbnail);
 els.pnext.addEventListener("click", () => step(1));
 document.addEventListener("keydown", (e) => {
   if (els.player.hidden) return;
@@ -852,7 +978,7 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "06.11.2026";
 const APP_CHANGES = [
-  "VIDEO/BILD zusätzlich als Text in der Zeile unter dem Namen (Etikett oben links bleibt)",
+  "Knopf „Als Vorschaubild“ im Player: speichert das aktuelle Standbild als Kachelbild (App-Ordner in OneDrive)",
 ];
 
 /* ---------- Selbstaktualisierung ---------- */
