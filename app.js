@@ -304,10 +304,24 @@ async function loadCustomThumbs() {
       setThumbStatus("Vorschaubilder: Berechtigung fehlt", "Berechtigen", () => appFolderToken(true));
       return;
     }
+    const auth = { headers: { Authorization: "Bearer " + token } };
+    // Wo liegt der App-Ordner? (für die Anzeige in der Fußzeile)
+    let where = "";
+    try {
+      const m = await fetch(GRAPH + "/me/drive/special/approot?$select=name,parentReference", auth);
+      if (m.ok) {
+        const j = await m.json();
+        const parent = ((j.parentReference && j.parentReference.path) || "").replace(/^\/drive\/root:?/, "");
+        where = (parent + "/" + (j.name || "")).replace(/^\//, "");
+      }
+    } catch (_) { /* nur Anzeige */ }
     const map = {};
-    let next = GRAPH + "/me/drive/special/approot/children?$select=name,@microsoft.graph.downloadUrl&$top=1000";
+    const missing = []; // Dateien ohne Abrufadresse in der Liste
+    let total = 0;
+    // Ohne $select abfragen: Die Abrufadresse (@microsoft.graph.downloadUrl) kommt dann von selbst mit.
+    let next = GRAPH + "/me/drive/special/approot/children?$top=1000";
     while (next) {
-      const res = await fetch(next, { headers: { Authorization: "Bearer " + token } });
+      const res = await fetch(next, auth);
       if (res.status === 404) { setThumbStatus("Vorschaubilder: App-Ordner noch leer"); return; }
       if (!res.ok) {
         let code = "";
@@ -317,13 +331,27 @@ async function loadCustomThumbs() {
       }
       const page = await res.json();
       for (const f of page.value || []) {
+        if (!f.file || !f.name) continue;
+        total += 1;
         const u = f["@microsoft.graph.downloadUrl"];
-        if (u && f.name) map[f.name] = u;
+        if (u) map[f.name] = u; else if (f.id) missing.push(f);
       }
       next = page["@odata.nextLink"] || null;
     }
+    // Zweiter Weg: Adresse je Datei einzeln holen.
+    for (let i = 0; i < missing.length; i += 6) {
+      await Promise.all(missing.slice(i, i + 6).map(async (f) => {
+        try {
+          const r = await fetch(GRAPH + "/me/drive/items/" + encodeURIComponent(f.id), auth);
+          if (!r.ok) return;
+          const j = await r.json();
+          if (j["@microsoft.graph.downloadUrl"]) map[f.name] = j["@microsoft.graph.downloadUrl"];
+        } catch (_) { /* einzelne Datei überspringen */ }
+      }));
+    }
     Object.assign(customThumbs, map);
-    setThumbStatus("Vorschaubilder: " + Object.keys(map).length + " geladen");
+    const n = Object.keys(map).length;
+    setThumbStatus("Vorschaubilder: " + n + " geladen" + (total !== n ? " von " + total + " Dateien" : "") + (where ? " · Ordner: " + where : ""));
     if (items.length) render();
   } catch (e) {
     setThumbStatus("Vorschaubilder: Fehler (" + ((e && (e.errorCode || e.message)) || e) + ")");
@@ -1233,7 +1261,7 @@ document.addEventListener("keydown", (e) => {
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
 const APP_DATE = "07.11.2026";
 const APP_CHANGES = [
-  "Fußzeile zeigt, wie viele Vorschaubilder geladen wurden (oder den Fehlergrund); Anmeldung fragt die Berechtigung dafür gleich mit",
+  "Vorschaubilder nach dem Start: Abfrage ohne $select und Zweitweg je Datei; Fußzeile nennt Dateianzahl und App-Ordner",
 ];
 
 /* ---------- Selbstaktualisierung ---------- */
