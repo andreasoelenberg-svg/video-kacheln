@@ -170,7 +170,7 @@ async function loadFolder(path, push) {
       next = page["@odata.nextLink"] || null;
     }
     if (token !== loadToken) return; // inzwischen wurde ein anderer Ordner geöffnet
-    items = all.filter((it) => it.folder || (it.file && (VIDEO_RE.test(it.name || "") || IMAGE_RE.test(it.name || ""))));
+    items = all.filter((it) => (it.folder && !HIDDEN_FOLDER_RE.test(it.name || "")) || (it.file && (VIDEO_RE.test(it.name || "") || IMAGE_RE.test(it.name || ""))));
     els.sort.hidden = false;
     els.reload.hidden = false;
     els.logout.hidden = false;
@@ -256,10 +256,11 @@ function sorted() {
 }
 
 /* ---------- Eigene Vorschaubilder (App-Ordner in OneDrive) ---------- */
-// Liegen als JPEG in OneDrive unter Apps/<App-Name>/thumbs/. Dafür genügt die eng begrenzte Berechtigung
-// Files.ReadWrite.AppFolder: Die App darf nur in ihrem eigenen Ordner schreiben, sonst nirgends.
+// Liegen als JPEG direkt im App-Ordner von OneDrive (anfangs Apps/<App-Name>/; der Ordner darf nach
+// Self KI/Thumbnails verschoben werden). Dafür genügt die eng begrenzte Berechtigung Files.ReadWrite.AppFolder:
+// Die App darf nur in diesem einen Ordner schreiben, sonst nirgends.
 const APP_SCOPE = "Files.ReadWrite.AppFolder";
-const THUMB_DIR = "thumbs";
+const HIDDEN_FOLDER_RE = /^thumbnails$/i; // dieser Ordner enthält nur die Vorschaubilder und wird nicht als Kachel gezeigt
 let customThumbs = {}; // Dateiname -> Adresse des Bildes
 
 const thumbName = (item) => String(item.id).replace(/[^A-Za-z0-9_-]/g, "_") + ".jpg";
@@ -282,7 +283,7 @@ async function loadCustomThumbs() {
     const token = await appFolderToken(false);
     if (!token) return; // Berechtigung noch nicht erteilt: dann gibt es auch keine eigenen Bilder
     const map = {};
-    let next = GRAPH + "/me/drive/special/approot:/" + THUMB_DIR + ":/children?$select=name,@microsoft.graph.downloadUrl&$top=1000";
+    let next = GRAPH + "/me/drive/special/approot/children?$select=name,@microsoft.graph.downloadUrl&$top=1000";
     while (next) {
       const res = await fetch(next, { headers: { Authorization: "Bearer " + token } });
       if (res.status === 404) break; // noch kein Bild gespeichert
@@ -547,7 +548,7 @@ async function saveThumbnail() {
     const url = data && data["@microsoft.graph.downloadUrl"];
     if (!url) throw new Error("keine Download-Adresse");
     const blob = await captureFrame(url, t);
-    const res = await fetch(GRAPH + "/me/drive/special/approot:/" + THUMB_DIR + "/" + thumbName(item) + ":/content", {
+    const res = await fetch(GRAPH + "/me/drive/special/approot:/" + thumbName(item) + ":/content", {
       method: "PUT",
       headers: { Authorization: "Bearer " + token, "Content-Type": "image/jpeg" },
       body: blob,
@@ -976,9 +977,9 @@ document.addEventListener("keydown", (e) => {
 /* ---------- Version ---------- */
 // Bei jeder Änderung: Nummer in index.html (<meta name="app-version">) und version.json erhöhen, APP_DATE und APP_CHANGES neu schreiben.
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || "?";
-const APP_DATE = "06.11.2026";
+const APP_DATE = "07.11.2026";
 const APP_CHANGES = [
-  "Knopf „Als Vorschaubild“ im Player: speichert das aktuelle Standbild als Kachelbild (App-Ordner in OneDrive)",
+  "Vorschaubilder liegen direkt im App-Ordner (ohne Unterordner „thumbs“); der Ordner „Thumbnails“ wird nicht als Kachel gezeigt",
 ];
 
 /* ---------- Selbstaktualisierung ---------- */
